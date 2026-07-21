@@ -171,8 +171,7 @@
     list.innerHTML = "";
     for (const { friend, room } of entries) {
       const card = document.createElement("div");
-      card.className = "action-card";
-      card.style.width = "200px";
+      card.className = "action-card open-room-card";
       card.innerHTML = `
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
           <div class="avatar sm" style="background:${friend.avatar_color}">${friend.username[0].toUpperCase()}</div>

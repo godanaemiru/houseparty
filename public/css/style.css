@@ -129,9 +129,12 @@ button.danger { background: linear-gradient(90deg, #ff5e5e, #ff8a5e); }
   border-radius: var(--radius);
   padding: 24px;
   width: 260px;
+  max-width: 100%;
 }
 .action-card h3 { margin-top: 0; }
 .action-card input { width: 100%; margin-bottom: 10px; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.25); color: var(--text); }
+
+.open-room-card { width: 200px; max-width: 100%; }
 
 /* ---------- Room ---------- */
 .room-shell { display: flex; min-height: 100vh; }
@@ -201,3 +204,51 @@ button.danger { background: linear-gradient(90deg, #ff5e5e, #ff8a5e); }
 .timer-fill { height: 100%; background: linear-gradient(90deg, var(--pink), var(--purple)); transition: width 0.2s linear; }
 
 .empty-hint { color: var(--text-dim); font-size: 0.9rem; text-align: center; margin-top: 40px; }
+
+/* ==========================================================================
+   Mobile layout (phones/small tablets in portrait — roughly up to a large
+   phone in landscape). Below this width, the fixed-width two-column layouts
+   used on desktop (sidebar+content, video+side-panel) get cramped or overflow
+   horizontally, so they switch to a stacked, full-width layout instead.
+   ========================================================================== */
+@media (max-width: 760px) {
+  .card { padding: 24px 20px; }
+
+  /* ---- Dashboard ---- */
+  .app-shell { flex-direction: column; min-height: auto; }
+  .sidebar {
+    width: 100%;
+    flex-shrink: 1;
+    padding: 16px;
+    border-right: none;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  #friends-list { max-height: 160px; overflow-y: auto; }
+  .logout-link { margin-top: 16px; }
+
+  .main-content { padding: 24px 16px; }
+  .hero h1 { font-size: 1.4rem; }
+  .actions-row { gap: 12px; }
+  .action-card { width: 100%; }
+  #open-rooms-section { max-width: 100%; }
+
+  /* ---- Room ---- */
+  .room-shell { flex-direction: column; min-height: auto; }
+  .room-main { padding: 12px; min-height: 46vh; }
+  .room-header { flex-wrap: wrap; gap: 8px; }
+  .video-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .room-controls { margin-top: 12px; }
+
+  .side-panel {
+    width: 100%;
+    height: 48vh;
+    border-left: none;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+}
+
+@media (max-width: 420px) {
+  .room-code-pill { font-size: 0.85rem; padding: 5px 10px; }
+  #copy-link-btn { font-size: 0.8rem; padding: 8px 12px; }
+  .control-btn { width: 44px; height: 44px; }
+}
