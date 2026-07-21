@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Housie &mdash; hang out face to face</title>
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#150826" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+<link rel="icon" href="/icons/favicon-32.png" type="image/png" />
+</head>
+<body>
+<div class="center-screen">
+  <div class="card">
+    <div class="brand" style="margin-bottom: 6px;">Housie</div>
+    <h1 id="form-title">Welcome back</h1>
+
+    <form id="login-form">
+      <div class="field">
+        <label>Username or email</label>
+        <input type="text" id="login-username" required autocomplete="username" />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="login-password" required autocomplete="current-password" />
+      </div>
+      <button type="submit" style="width:100%">Log in</button>
+      <div class="error-msg" id="login-error"></div>
+    </form>
+
+    <form id="register-form" style="display:none">
+      <div class="field">
+        <label>Username</label>
+        <input type="text" id="reg-username" required />
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="reg-email" required />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="reg-password" required minlength="6" />
+      </div>
+      <button type="submit" style="width:100%">Create account</button>
+      <div class="error-msg" id="register-error"></div>
+    </form>
+
+    <div class="switch-link">
+      <span id="switch-to-register">New here? <a href="#">Create an account</a></span>
+      <span id="switch-to-login" style="display:none">Already have an account? <a href="#">Log in</a></span>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+  if (Auth.getToken()) window.location.href = "/dashboard.html";
+
+  const loginForm = document.getElementById("login-form");
+  const registerForm = document.getElementById("register-form");
+  const title = document.getElementById("form-title");
+  const toRegister = document.getElementById("switch-to-register");
+  const toLogin = document.getElementById("switch-to-login");
+
+  toRegister.querySelector("a").onclick = (e) => {
+    e.preventDefault();
+    loginForm.style.display = "none";
+    registerForm.style.display = "block";
+    toRegister.style.display = "none";
+    toLogin.style.display = "inline";
+    title.textContent = "Create your account";
+  };
+  toLogin.querySelector("a").onclick = (e) => {
+    e.preventDefault();
+    registerForm.style.display = "none";
+    loginForm.style.display = "block";
+    toLogin.style.display = "none";
+    toRegister.style.display = "inline";
+    title.textContent = "Welcome back";
+  };
+
+  loginForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errorEl = document.getElementById("login-error");
+    errorEl.textContent = "";
+    try {
+      const data = await api("/login", {
+        method: "POST",
+        body: {
+          username: document.getElementById("login-username").value.trim(),
+          password: document.getElementById("login-password").value,
+        },
+      });
+      Auth.setSession(data.token, data.user);
+      window.location.href = "/dashboard.html";
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+  });
+
+  registerForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errorEl = document.getElementById("register-error");
+    errorEl.textContent = "";
+    try {
+      const data = await api("/register", {
+        method: "POST",
+        body: {
+          username: document.getElementById("reg-username").value.trim(),
+          email: document.getElementById("reg-email").value.trim(),
+          password: document.getElementById("reg-password").value,
+        },
+      });
+      Auth.setSession(data.token, data.user);
+      window.location.href = "/dashboard.html";
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+  });
+</script>
+<script src="/js/pwa.js"></script>
+</body>
+</html>

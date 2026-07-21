@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Housie &mdash; Dashboard</title>
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#150826" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+<link rel="icon" href="/icons/favicon-32.png" type="image/png" />
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="brand">Housie</div>
+    </div>
+    <button id="install-app-btn" class="secondary" style="display:none; margin-bottom:16px; width:100%">
+      ⬇️ Install app
+    </button>
+    <div class="me">
+      <div class="avatar" id="me-avatar"></div>
+      <div>
+        <div id="me-username" style="font-weight:600"></div>
+        <div style="font-size:0.75rem;color:var(--text-dim)">Online</div>
+      </div>
+    </div>
+
+    <div class="section-title">Friends</div>
+    <div id="friends-list"></div>
+    <div class="add-friend-row">
+      <input type="text" id="add-friend-input" placeholder="Add friend by username" />
+      <button id="add-friend-btn">Add</button>
+    </div>
+    <div class="error-msg" id="friend-error"></div>
+
+    <div class="logout-link" id="logout-btn">Log out</div>
+  </div>
+
+  <div class="main-content">
+    <div class="hero">
+      <h1>Hey <span id="hero-username"></span> 👋</h1>
+      <p>Start a room and drop the link, or join one your friends are in.</p>
+    </div>
+
+    <div id="open-rooms-section" style="width:100%; max-width:640px; margin-bottom:28px; display:none">
+      <div class="section-title" style="margin-top:0">Friends hanging out now</div>
+      <div id="open-rooms-list" style="display:flex; flex-wrap:wrap; gap:12px"></div>
+    </div>
+
+    <div class="actions-row">
+      <div class="action-card">
+        <h3>Start a room</h3>
+        <input type="text" id="room-name-input" placeholder="Room name (optional)" />
+        <button id="create-room-btn" style="width:100%">Create &amp; join</button>
+      </div>
+      <div class="action-card">
+        <h3>Join a room</h3>
+        <input type="text" id="join-code-input" placeholder="Enter room code" style="text-transform:uppercase" />
+        <button id="join-room-btn" style="width:100%">Join</button>
+        <div class="error-msg" id="join-error"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/api.js"></script>
+<script>
+  Auth.requireAuth();
+  const user = Auth.getUser();
+  document.getElementById("me-username").textContent = user.username;
+  document.getElementById("hero-username").textContent = user.username;
+  const meAvatar = document.getElementById("me-avatar");
+  meAvatar.style.background = user.avatar_color;
+  meAvatar.textContent = user.username[0].toUpperCase();
+
+  document.getElementById("logout-btn").onclick = () => {
+    Auth.clear();
+    window.location.href = "/index.html";
+  };
+
+  document.getElementById("create-room-btn").onclick = async () => {
+    try {
+      const name = document.getElementById("room-name-input").value.trim();
+      const data = await api("/rooms", { method: "POST", body: { name } });
+      window.location.href = `/room.html?code=${data.room.code}`;
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  document.getElementById("join-room-btn").onclick = async () => {
+    const errorEl = document.getElementById("join-error");
+    errorEl.textContent = "";
+    const code = document.getElementById("join-code-input").value.trim().toUpperCase();
+    if (!code) return;
+    try {
+      await api(`/rooms/${code}`);
+      window.location.href = `/room.html?code=${code}`;
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+  };
+
+  document.getElementById("add-friend-btn").onclick = async () => {
+    const errorEl = document.getElementById("friend-error");
+    errorEl.textContent = "";
+    const input = document.getElementById("add-friend-input");
+    const username = input.value.trim();
+    if (!username) return;
+    try {
+      await api("/friends/add", { method: "POST", body: { username } });
+      input.value = "";
+      loadFriends();
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+  };
+
+  let friendsCache = [];
+  async function loadFriends() {
+    const data = await api("/friends");
+    friendsCache = data.friends;
+    renderFriends();
+  }
+
+  const onlineSet = new Set();
+  const friendRooms = new Map(); // userId -> { code, name }
+
+  function renderFriends() {
+    const list = document.getElementById("friends-list");
+    list.innerHTML = "";
+    if (friendsCache.length === 0) {
+      list.innerHTML = '<div class="empty-hint" style="margin-top:10px">No friends yet</div>';
+      return;
+    }
+    for (const f of friendsCache) {
+      const row = document.createElement("div");
+      row.className = "friend-row";
+      const online = onlineSet.has(f.id);
+      const room = friendRooms.get(f.id);
+      row.innerHTML = `
+        <div class="avatar sm" style="background:${f.avatar_color}">${f.username[0].toUpperCase()}</div>
+        <div class="friend-name">
+          ${f.username}
+          ${room ? `<div style="font-size:0.72rem;color:var(--pink)">🎉 in ${escapeHtml(room.name)}</div>` : ""}
+        </div>
+        ${room ? `<button class="join-friend-room-btn" data-code="${room.code}" style="padding:4px 10px;font-size:0.75rem">Join</button>` : `<div class="dot ${online ? "online" : ""}"></div>`}
+      `;
+      list.appendChild(row);
+    }
+    list.querySelectorAll(".join-friend-room-btn").forEach((btn) => {
+      btn.onclick = () => { window.location.href = `/room.html?code=${btn.dataset.code}`; };
+    });
+  }
+
+  function renderOpenRooms() {
+    const section = document.getElementById("open-rooms-section");
+    const list = document.getElementById("open-rooms-list");
+    const entries = friendsCache
+      .filter((f) => friendRooms.has(f.id))
+      .map((f) => ({ friend: f, room: friendRooms.get(f.id) }));
+
+    if (entries.length === 0) {
+      section.style.display = "none";
+      return;
+    }
+    section.style.display = "block";
+    list.innerHTML = "";
+    for (const { friend, room } of entries) {
+      const card = document.createElement("div");
+      card.className = "action-card";
+      card.style.width = "200px";
+      card.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <div class="avatar sm" style="background:${friend.avatar_color}">${friend.username[0].toUpperCase()}</div>
+          <div>
+            <div style="font-weight:600">${escapeHtml(friend.username)}</div>
+            <div style="font-size:0.75rem;color:var(--text-dim)">${escapeHtml(room.name)}</div>
+          </div>
+        </div>
+        <button class="join-friend-room-btn" data-code="${room.code}" style="width:100%">Join room</button>
+      `;
+      list.appendChild(card);
+    }
+    list.querySelectorAll(".join-friend-room-btn").forEach((btn) => {
+      btn.onclick = () => { window.location.href = `/room.html?code=${btn.dataset.code}`; };
+    });
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  // Socket for live presence
+  const socket = io({ auth: { token: Auth.getToken() } });
+  socket.on("friends:status", (statuses) => {
+    for (const s of statuses) {
+      if (s.online) onlineSet.add(s.userId);
+      if (s.room) friendRooms.set(s.userId, s.room);
+    }
+    renderFriends();
+    renderOpenRooms();
+  });
+  socket.on("friend:online", ({ userId }) => { onlineSet.add(userId); renderFriends(); });
+  socket.on("friend:offline", ({ userId }) => {
+    onlineSet.delete(userId);
+    friendRooms.delete(userId);
+    renderFriends();
+    renderOpenRooms();
+  });
+  socket.on("friend:room-changed", ({ userId, room }) => {
+    if (room) friendRooms.set(userId, room);
+    else friendRooms.delete(userId);
+    renderFriends();
+    renderOpenRooms();
+  });
+  socket.on("connect_error", (err) => {
+    if (err.message === "unauthorized") { Auth.clear(); window.location.href = "/index.html"; }
+  });
+
+  loadFriends();
+</script>
+<script src="/js/pwa.js"></script>
+</body>
+</html>

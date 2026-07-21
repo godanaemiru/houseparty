@@ -1,0 +1,38 @@
+# Render Blueprint: lets Render provision both the web service and a free managed
+# Postgres database in one step, wired together automatically.
+#
+# To use: push this repo to GitHub, then in the Render dashboard choose
+# "New +" -> "Blueprint" and point it at the repo. Render reads this file and sets
+# everything up — you'll just need to review/confirm the plan and click Apply.
+#
+# See README.md ("Deploying so friends can join from anywhere") for the full walkthrough.
+
+databases:
+  - name: housie-db
+    databaseName: housie
+    plan: free
+
+services:
+  - type: web
+    name: housie
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: housie-db
+          property: connectionString
+      # Optional — only needed if you're enabling the LiveKit SFU video mode (see README).
+      # Uncomment and fill these in via the Render dashboard once you have a LiveKit project.
+      # - key: LIVEKIT_URL
+      #   sync: false
+      # - key: LIVEKIT_API_KEY
+      #   sync: false
+      # - key: LIVEKIT_API_SECRET
+      #   sync: false

@@ -1,0 +1,26 @@
+{
+  "name": "houseparty-clone",
+  "version": "1.0.0",
+  "description": "A Houseparty-style group video chat app with rooms, friends, chat, and in-room mini-games.",
+  "main": "server/index.js",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "jsonwebtoken": "^9.0.2",
+    "livekit-server-sdk": "^2.9.2",
+    "pg": "^8.13.0",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.7.5"
+  }
+}

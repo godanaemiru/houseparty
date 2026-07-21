@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Housie &mdash; Room</title>
+<link rel="stylesheet" href="/css/style.css" />
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#150826" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+<link rel="icon" href="/icons/favicon-32.png" type="image/png" />
+</head>
+<body>
+<div class="room-shell">
+  <div class="room-main">
+    <div class="room-header">
+      <div class="brand">Housie</div>
+      <div class="room-code-pill" id="room-code-pill">------</div>
+      <button class="secondary" id="copy-link-btn">Copy invite link</button>
+    </div>
+    <div class="video-grid" id="video-grid"></div>
+    <div class="room-controls">
+      <div class="control-btn" id="toggle-mic">🎙️</div>
+      <div class="control-btn" id="toggle-cam">📷</div>
+      <div class="control-btn danger" id="leave-room" style="background:linear-gradient(90deg,#ff5e5e,#ff8a5e)">📞</div>
+    </div>
+  </div>
+
+  <div class="side-panel">
+    <div class="tabs">
+      <div class="tab active" data-tab="chat">Chat</div>
+      <div class="tab" data-tab="game">🎮 Trivia</div>
+      <div class="tab" data-tab="doodle">🎨 Draw</div>
+    </div>
+
+    <div class="tab-content" id="chat-tab">
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" placeholder="Say something..." />
+        <button id="chat-send-btn">Send</button>
+      </div>
+    </div>
+
+    <div class="tab-content" id="game-tab" style="display:none">
+      <div class="game-panel" id="game-panel">
+        <p class="empty-hint" style="margin-top: 10px">Play Trivia with everyone in the room.</p>
+        <button id="start-game-btn">Start Trivia</button>
+        <div class="scoreboard" id="scoreboard-idle"></div>
+      </div>
+    </div>
+
+    <div class="tab-content" id="doodle-tab" style="display:none">
+      <div id="doodle-idle-panel" class="game-panel">
+        <p class="empty-hint" style="margin-top: 10px">Take turns drawing while everyone else guesses in Chat.</p>
+        <button id="start-doodle-btn">Start Drawing Game</button>
+      </div>
+      <div id="doodle-active-panel" style="display:none; flex-direction:column; gap:8px; height:100%">
+        <div id="doodle-status" style="font-size:0.85rem; color:var(--text-dim); text-align:center"></div>
+        <div class="timer-bar"><div class="timer-fill" id="doodle-timer-fill" style="width:100%"></div></div>
+        <div id="doodle-word-display" style="text-align:center; font-weight:700; letter-spacing:3px; font-size:1.1rem"></div>
+        <canvas id="doodle-canvas" width="280" height="280" style="width:100%; aspect-ratio:1/1; background:#fff; border-radius:12px; touch-action:none; cursor:crosshair"></canvas>
+        <p id="doodle-hint" class="empty-hint" style="margin:0">Guess in the Chat tab!</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<!-- Only used if the server has LiveKit configured (see README) — harmless no-op otherwise. -->
+<script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/room.js"></script>
+<script src="/js/pwa.js"></script>
+</body>
+</html>
