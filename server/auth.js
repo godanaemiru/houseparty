@@ -20,9 +20,17 @@ if (!JWT_SECRET) {
   );
 }
 
+// Token lifetime is a security/convenience tradeoff: the token is stored in the browser's
+// localStorage (so it's readable by any injected script), which means a shorter life
+// limits the damage window if one ever leaks. Default 7 days is a reasonable middle ground
+// for a casual hangout app; shorten it further (e.g. "1d") via JWT_EXPIRES_IN for anything
+// more sensitive. A hardening step beyond this app's scope would be an httpOnly cookie plus
+// a refresh-token rotation scheme.
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
+
 function signToken(user) {
   return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, {
-    expiresIn: "30d",
+    expiresIn: JWT_EXPIRES_IN,
   });
 }
 

@@ -29,6 +29,17 @@ async function api(path, options = {}) {
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
+  // An expired or invalid token (now that tokens expire) shouldn't strand the user on a
+  // half-working page — clear the dead session and bounce to login. The isLoginPage guard
+  // avoids a redirect loop if a login/register call itself returns 401.
+  if (res.status === 401 && token) {
+    const isLoginPage = /\/(index\.html)?$/.test(window.location.pathname);
+    Auth.clear();
+    if (!isLoginPage) {
+      window.location.href = "/index.html";
+      return new Promise(() => {}); // halt callers while we navigate away
+    }
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Request failed");
   return data;
