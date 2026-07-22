@@ -46,8 +46,11 @@ Copy `.env.example` to `.env` as a reference for what's configurable (this app r
 - `DATABASE_URL` — a Postgres connection string. When set, the app uses Postgres (`server/db/postgres.js`) instead of local SQLite (`server/db/sqlite.js`) — see "Deploying" below. Both backends implement the same interface, so nothing else changes.
 - `ALLOWED_ORIGINS` — comma-separated list of origins allowed to call the API / connect via Socket.IO (e.g. `https://myapp.com`). Defaults to allowing any origin, which is fine locally but should be locked down in production.
 - `PORT` — defaults to 3000; most hosts set this automatically.
+- `JWT_EXPIRES_IN` — how long a login session stays valid (e.g. `1d`, `12h`, `7d`). Defaults to `7d`. Shorter is safer since the token lives in the browser's `localStorage`; the client automatically clears the session and redirects to login when a token expires.
+- `TURN_URL` / `TURN_USERNAME` / `TURN_CREDENTIAL` — **strongly recommended for real use.** A TURN relay so users behind symmetric NAT (many mobile carriers, corporate/university networks) can actually establish a WebRTC connection — STUN alone isn't enough for them. `TURN_URL` may be a comma-separated list (e.g. `turn:host:3478,turns:host:5349`). Without it the app still works for most home networks, but some users simply won't connect. See "Making video connect reliably" below.
 - `LOG_LEVEL` — `trace`/`debug`/`info`/`warn`/`error`/`silent`, defaults to `info`. Controls the structured (`pino`) logger's verbosity.
 - `PG_POOL_MAX` — max Postgres connections per running instance, defaults to `10`. Only relevant when `DATABASE_URL` is set; tune this down if you're running several instances against a database plan with a low connection cap.
+- `AUTH_RATE_LIMIT` — max register/login attempts per IP per 15 minutes, defaults to `20`. Raise it if you're behind a shared proxy/NAT where many users share an IP.
 - `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` — optional, see "Scaling video past ~8 people" below.
 
 ## Testing multi-person video locally
@@ -79,6 +82,17 @@ DATABASE_URL=postgres://user:pass@localhost:5432/housie_test npm test
 ```
 
 **CI**: `.github/workflows/ci.yml` runs this suite on every push/PR twice — once against SQLite, once against a real Postgres 16 service container — so both database backends stay verified automatically.
+
+## Making video connect reliably (TURN)
+
+The WebRTC mesh needs to punch through each participant's NAT/firewall. A public STUN server (always included) handles that for most home networks, but users behind **symmetric NAT** — very common on mobile carriers and corporate/university networks — can only connect through a **TURN relay** that forwards their media. Without one, those users' video tiles simply never appear, with no obvious error.
+
+To fix that, set `TURN_URL` (and usually `TURN_USERNAME` / `TURN_CREDENTIAL`) to a TURN service. Options:
+
+- A managed provider like [Twilio Network Traversal](https://www.twilio.com/stun-turn) or [Metered](https://www.metered.ca/tools/openrelay/) — quickest to set up.
+- Self-hosted [coturn](https://github.com/coturn/coturn) on a small VPS.
+
+The server merges these into the ICE server list it hands the browser via `GET /api/config`, so no client changes are needed — set the env vars and restart. (The LiveKit SFU mode below also relays media, so if you enable that you don't separately need TURN.)
 
 ## Scaling video past ~8 people (optional LiveKit SFU mode)
 
