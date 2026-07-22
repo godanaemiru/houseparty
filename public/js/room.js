@@ -154,11 +154,21 @@ function addVideoTile(id, stream, info, muted) {
   video.autoplay = true;
   video.playsInline = true;
   if (muted) video.muted = true;
+  // Only your own preview is mirrored (id "me"), matching standard video-chat behavior.
+  if (id === "me") video.classList.add("mirror");
   video.srcObject = stream;
   const label = document.createElement("div");
   label.className = "label";
   label.textContent = info.username;
+  // Shown in place of the video when the camera is off (currently only wired for your own
+  // tile, since we don't signal remote peers' camera state).
+  const avatar = document.createElement("div");
+  avatar.className = "cam-off-avatar";
+  avatar.style.background = (info && info.avatarColor) || "#7b5eff";
+  const name = (info && info.username) || "?";
+  avatar.textContent = name.replace(/\s*\(you\)$/, "").trim().charAt(0).toUpperCase() || "?";
   tile.appendChild(video);
+  tile.appendChild(avatar);
   tile.appendChild(label);
   videoGrid.appendChild(tile);
 }
