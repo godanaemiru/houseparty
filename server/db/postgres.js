@@ -213,6 +213,10 @@ async function findActiveRoomByCode(code) {
   return rows[0] || null;
 }
 
+async function deactivateRoom(code) {
+  await pool.query("UPDATE rooms SET active = 0 WHERE code = $1", [code]);
+}
+
 async function getRandomTriviaQuestions(limit) {
   const { rows } = await pool.query("SELECT * FROM trivia_questions ORDER BY RANDOM() LIMIT $1", [limit]);
   return rows.map((q) => ({ ...q, options: JSON.parse(q.options) }));
@@ -237,5 +241,6 @@ module.exports = {
   roomCodeExists,
   createRoom,
   findActiveRoomByCode,
+  deactivateRoom,
   getRandomTriviaQuestions,
 };

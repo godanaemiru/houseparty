@@ -157,6 +157,10 @@ async function findActiveRoomByCode(code) {
   return db.prepare("SELECT * FROM rooms WHERE code = ? AND active = 1").get(code) || null;
 }
 
+async function deactivateRoom(code) {
+  db.prepare("UPDATE rooms SET active = 0 WHERE code = ?").run(code);
+}
+
 async function getRandomTriviaQuestions(limit) {
   return db
     .prepare("SELECT * FROM trivia_questions ORDER BY RANDOM() LIMIT ?")
@@ -185,5 +189,6 @@ module.exports = {
   roomCodeExists,
   createRoom,
   findActiveRoomByCode,
+  deactivateRoom,
   getRandomTriviaQuestions,
 };

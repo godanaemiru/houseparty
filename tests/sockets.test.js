@@ -216,6 +216,39 @@ test("doodle game: drawer draws, guesser guesses the right word and scores", asy
   sPam.close();
 });
 
+test("room is deactivated once the last member leaves", async () => {
+  const tess = await registerAndLogin("tess");
+  const room = await post("/api/rooms", { name: "Ephemeral" }, tess.token);
+  const code = room.data.room.code;
+
+  // Room is joinable while occupied.
+  const beforeRes = await fetch(server.baseUrl + `/api/rooms/${code}`, {
+    headers: { Authorization: `Bearer ${tess.token}` },
+  });
+  assert.equal(beforeRes.status, 200);
+
+  const sTess = connect(tess.token);
+  await waitFor(sTess, "connect");
+  sTess.emit("room:join", { code, avatarColor: "#abc" });
+  await waitFor(sTess, "room:joined");
+
+  // Last (only) member leaves -> server should retire the room.
+  sTess.emit("room:leave");
+  sTess.close();
+
+  // deactivateRoom is fire-and-forget, so poll briefly for the 404 instead of racing it.
+  let finalStatus = 200;
+  for (let i = 0; i < 20; i++) {
+    const res = await fetch(server.baseUrl + `/api/rooms/${code}`, {
+      headers: { Authorization: `Bearer ${tess.token}` },
+    });
+    finalStatus = res.status;
+    if (finalStatus === 404) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.equal(finalStatus, 404, "room should be inactive (404) after everyone leaves");
+});
+
 test("flag quiz: start -> question is a flag among 4 options -> server grades answers", async () => {
   const opal = await registerAndLogin("opal");
   const room = await post("/api/rooms", { name: "Flags" }, opal.token);

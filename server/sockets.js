@@ -1,5 +1,6 @@
 const { verifyToken } = require("./auth");
 const db = require("./db");
+const logger = require("./logger");
 
 // In-memory presence + room state (fine for a single-process demo server)
 const onlineUsers = new Map(); // userId -> Set(socketId)
@@ -269,6 +270,11 @@ function attachSockets(io) {
         const hgame = headsUpGames.get(roomCode);
         if (hgame) clearTimeout(hgame.timer);
         headsUpGames.delete(roomCode);
+        // Room is now empty — retire it so its code can't be re-joined and stale rows
+        // don't pile up. A fresh room (new code) is created next time someone starts one.
+        db.deactivateRoom(roomCode).catch((err) =>
+          logger.error({ err, roomCode }, "Failed to deactivate empty room")
+        );
       } else {
         // If the person drawing/performing leaves mid-round, don't leave everyone else
         // waiting forever.
