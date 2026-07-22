@@ -411,15 +411,38 @@ let micOn = true, camOn = true;
 document.getElementById("toggle-mic").onclick = (e) => {
   micOn = !micOn;
   localStream.getAudioTracks().forEach((t) => (t.enabled = micOn));
-  e.currentTarget.classList.toggle("off", !micOn);
-  e.currentTarget.textContent = micOn ? "🎙️" : "🔇";
+  const btn = e.currentTarget;
+  btn.classList.toggle("off", !micOn);
+  btn.textContent = micOn ? "🎙️" : "🔇";
+  const label = micOn ? "Mute microphone" : "Unmute microphone";
+  btn.setAttribute("aria-label", label);
+  btn.title = label;
 };
 document.getElementById("toggle-cam").onclick = (e) => {
   camOn = !camOn;
   localStream.getVideoTracks().forEach((t) => (t.enabled = camOn));
-  e.currentTarget.classList.toggle("off", !camOn);
-  e.currentTarget.textContent = camOn ? "📷" : "🚫";
+  const btn = e.currentTarget;
+  btn.classList.toggle("off", !camOn);
+  btn.textContent = camOn ? "📷" : "🚫";
+  const label = camOn ? "Turn off camera" : "Turn on camera";
+  btn.setAttribute("aria-label", label);
+  btn.title = label;
+  // Show the avatar placeholder over your own tile while the camera is off.
+  const meTile = document.getElementById("tile-me");
+  if (meTile) meTile.classList.toggle("cam-off", !camOn);
 };
+
+// Make the role="button" / role="tab" divs keyboard-operable: Enter or Space triggers the
+// same click handler, so the whole room is usable without a mouse.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const el = e.target;
+  const role = el && el.getAttribute && el.getAttribute("role");
+  if (role === "button" || role === "tab") {
+    e.preventDefault();
+    el.click();
+  }
+});
 document.getElementById("leave-room").onclick = () => {
   socket.emit("room:leave");
   for (const id in peers) peers[id].pc.close();

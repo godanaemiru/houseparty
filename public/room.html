@@ -20,19 +20,19 @@
     </div>
     <div class="video-grid" id="video-grid"></div>
     <div class="room-controls">
-      <div class="control-btn" id="toggle-mic">🎙️</div>
-      <div class="control-btn" id="toggle-cam">📷</div>
-      <div class="control-btn danger" id="leave-room" style="background:linear-gradient(90deg,#ff5e5e,#ff8a5e)">📞</div>
+      <div class="control-btn" id="toggle-mic" role="button" tabindex="0" aria-label="Mute microphone" title="Mute microphone">🎙️</div>
+      <div class="control-btn" id="toggle-cam" role="button" tabindex="0" aria-label="Turn off camera" title="Turn off camera">📷</div>
+      <div class="control-btn danger" id="leave-room" role="button" tabindex="0" aria-label="Leave room" title="Leave room" style="background:linear-gradient(90deg,#ff5e5e,#ff8a5e)">📞</div>
     </div>
   </div>
 
   <div class="side-panel">
-    <div class="tabs">
-      <div class="tab active" data-tab="chat">💬 Chat</div>
-      <div class="tab" data-tab="game">🎮 Trivia</div>
-      <div class="tab" data-tab="flags">🏳️ Flags</div>
-      <div class="tab" data-tab="doodle">🎨 Draw</div>
-      <div class="tab" data-tab="headsup">🙈 Heads Up</div>
+    <div class="tabs" role="tablist">
+      <div class="tab active" data-tab="chat" role="tab" tabindex="0">💬 Chat</div>
+      <div class="tab" data-tab="game" role="tab" tabindex="0">🎮 Trivia</div>
+      <div class="tab" data-tab="flags" role="tab" tabindex="0">🏳️ Flags</div>
+      <div class="tab" data-tab="doodle" role="tab" tabindex="0">🎨 Draw</div>
+      <div class="tab" data-tab="headsup" role="tab" tabindex="0">🙈 Heads Up</div>
     </div>
 
     <div class="tab-content" id="chat-tab">

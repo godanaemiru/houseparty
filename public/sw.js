@@ -1,7 +1,7 @@
 // Minimal service worker: caches the static app shell so the app installs and opens
 // instantly, but never touches anything real-time (API calls, Socket.IO, WebRTC/LiveKit).
 // Bump CACHE_NAME whenever you change any cached file so clients pick up the new version.
-const CACHE_NAME = "housie-shell-v2";
+const CACHE_NAME = "housie-shell-v3";
 
 const APP_SHELL = [
   "/index.html",
