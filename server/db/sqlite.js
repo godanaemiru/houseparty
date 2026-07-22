@@ -5,7 +5,9 @@
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 
-const dbPath = path.join(__dirname, "..", "..", "data.sqlite");
+// Overridable so tests (and anyone running multiple instances locally) can point at an
+// isolated file instead of sharing the app's real data.sqlite.
+const dbPath = process.env.SQLITE_PATH || path.join(__dirname, "..", "..", "data.sqlite");
 const db = new DatabaseSync(dbPath);
 
 const TRIVIA_SEED = [
@@ -162,8 +164,15 @@ async function getRandomTriviaQuestions(limit) {
     .map((q) => ({ ...q, options: JSON.parse(q.options) }));
 }
 
+// Cheap liveness/readiness check for the /healthz route — confirms the DB handle can
+// actually run a query, not just that the process holding it is alive.
+async function ping() {
+  db.prepare("SELECT 1").get();
+}
+
 module.exports = {
   init,
+  ping,
   findUserIdByUsernameOrEmail,
   createUser,
   findUserForLogin,

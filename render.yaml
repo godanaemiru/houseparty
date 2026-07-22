@@ -28,6 +28,11 @@ services:
         fromDatabase:
           name: housie-db
           property: connectionString
+      # Optional tuning — safe to leave unset, sensible defaults are baked in.
+      # - key: LOG_LEVEL       # pino level: trace|debug|info|warn|error (default: info)
+      #   value: info
+      # - key: PG_POOL_MAX     # max Postgres pool connections per instance (default: 10)
+      #   value: "10"
       # Optional — only needed if you're enabling the LiveKit SFU video mode (see README).
       # Uncomment and fill these in via the Render dashboard once you have a LiveKit project.
       # - key: LIVEKIT_URL

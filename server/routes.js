@@ -2,6 +2,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const rateLimit = require("express-rate-limit");
 const db = require("./db");
+const logger = require("./logger");
 const { signToken, requireAuth } = require("./auth");
 const { isLiveKitConfigured, createLiveKitToken } = require("./livekit");
 
@@ -15,6 +16,17 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many attempts. Please try again in a few minutes." },
+});
+
+// Wider net for other write endpoints that are cheap to spam (room creation, friend
+// requests) but aren't the primary brute-force target auth is. Generous enough that a
+// real user bashing "create room" wouldn't notice, tight enough to blunt scripted abuse.
+const writeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please slow down and try again shortly." },
 });
 
 const COLORS = ["#ff5e7e", "#7b5eff", "#5ec6ff", "#ffb85e", "#5effb0", "#ff5ec8"];
@@ -33,7 +45,7 @@ function randomRoomCode() {
 function asyncRoute(fn) {
   return (req, res) => {
     Promise.resolve(fn(req, res)).catch((err) => {
-      console.error("Route error:", err);
+      logger.error({ err, path: req.path, method: req.method }, "Route error");
       if (!res.headersSent) res.status(500).json({ error: "Something went wrong" });
     });
   };
@@ -112,6 +124,7 @@ router.get(
 router.post(
   "/friends/add",
   requireAuth,
+  writeLimiter,
   asyncRoute(async (req, res) => {
     const { username } = req.body || {};
     const friend = await db.findUserByUsername(username);
@@ -127,6 +140,7 @@ router.post(
 router.post(
   "/rooms",
   requireAuth,
+  writeLimiter,
   asyncRoute(async (req, res) => {
     const { name } = req.body || {};
     let code;
@@ -176,7 +190,7 @@ router.post(
       });
       res.json({ token, url: process.env.LIVEKIT_URL });
     } catch (err) {
-      console.error("LiveKit token error:", err);
+      logger.error({ err }, "LiveKit token error");
       res.status(500).json({ error: "Failed to create LiveKit token" });
     }
   })

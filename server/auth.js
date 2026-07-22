@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const logger = require("./logger");
 
 const isProd = process.env.NODE_ENV === "production";
 let JWT_SECRET = process.env.JWT_SECRET;
@@ -13,8 +14,8 @@ if (!JWT_SECRET) {
     );
   }
   JWT_SECRET = "houseparty-clone-dev-secret-change-me";
-  console.warn(
-    "[auth] WARNING: JWT_SECRET is not set — using an insecure default for local development only. " +
+  logger.warn(
+    "[auth] JWT_SECRET is not set — using an insecure default for local development only. " +
       "Set JWT_SECRET before deploying anywhere real."
   );
 }

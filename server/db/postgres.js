@@ -2,6 +2,7 @@
 // managed Postgres instance attached). Same method names/shapes as sqlite.js so routes.js
 // and sockets.js don't need to know which backend is active.
 const { Pool } = require("pg");
+const logger = require("../logger");
 
 function isLocalDatabase(connectionString) {
   if (!connectionString) return true;
@@ -13,19 +14,31 @@ function isLocalDatabase(connectionString) {
   }
 }
 
+// Pool size: Render's free Postgres plan caps total connections fairly low (typically
+// ~20-ish shared across all of a project's usage), and each web dyno/instance gets its
+// own pool. Default to a conservative 10 so a couple of instances can't exhaust the
+// database's connection limit between them; override via PG_POOL_MAX if you know your
+// plan's limit and want to tune it.
+const poolMax = Number.parseInt(process.env.PG_POOL_MAX, 10) || 10;
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   // Most managed Postgres providers (Render included) require SSL but use a certificate
   // that isn't in Node's default trust store — this is the standard escape hatch for that.
   // A local Postgres (dev/testing) typically has no SSL configured at all, so skip it there.
   ssl: isLocalDatabase(process.env.DATABASE_URL) ? false : { rejectUnauthorized: false },
+  max: poolMax,
+  // Close connections that have been idle a while so we don't hold onto more of the
+  // database's connection budget than we're actually using.
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 10_000,
 });
 
 // Without this, an unexpected error on an *idle* pooled connection (a network blip, the
 // database restarting, etc.) is an unhandled 'error' event, which crashes the whole
 // Node process. Logging it instead keeps the server up so pg can reconnect on next query.
 pool.on("error", (err) => {
-  console.error("[db] Unexpected error on idle Postgres client:", err.message);
+  logger.error({ err }, "Unexpected error on idle Postgres client");
 });
 
 const TRIVIA_SEED = [
@@ -205,8 +218,13 @@ async function getRandomTriviaQuestions(limit) {
   return rows.map((q) => ({ ...q, options: JSON.parse(q.options) }));
 }
 
+async function ping() {
+  await pool.query("SELECT 1");
+}
+
 module.exports = {
   init,
+  ping,
   findUserIdByUsernameOrEmail,
   createUser,
   findUserForLogin,
