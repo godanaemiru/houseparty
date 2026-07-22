@@ -121,6 +121,9 @@ test("config reports LiveKit disabled, and its token endpoint 501s, when unconfi
   const config = await get("/api/config");
   assert.equal(config.status, 200);
   assert.equal(config.data.livekitEnabled, false);
+  // Always ships at least a STUN server so the mesh works out of the box.
+  assert.ok(Array.isArray(config.data.iceServers));
+  assert.ok(config.data.iceServers.some((s) => String(s.urls).includes("stun:")));
 
   await post("/api/register", { username: "ivan", email: "ivan@test.com", password: "password123" });
   const ivan = await post("/api/login", { username: "ivan", password: "password123" });

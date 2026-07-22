@@ -163,11 +163,30 @@ router.get(
   })
 );
 
+// Builds the ICE server list handed to the browser's RTCPeerConnection. A public STUN
+// server is always included (it's enough for most home networks), but users behind
+// symmetric NAT — common on mobile carriers and corporate/university networks — can only
+// connect through a TURN relay. If TURN_URL (+ optional credentials) is configured, it's
+// appended so those users aren't silently left unable to connect. TURN_URL may be a
+// comma-separated list (e.g. udp + tcp/443 fallbacks).
+function buildIceServers() {
+  const iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+  if (process.env.TURN_URL) {
+    const urls = process.env.TURN_URL.split(",").map((u) => u.trim()).filter(Boolean);
+    const turn = { urls };
+    if (process.env.TURN_USERNAME) turn.username = process.env.TURN_USERNAME;
+    if (process.env.TURN_CREDENTIAL) turn.credential = process.env.TURN_CREDENTIAL;
+    iceServers.push(turn);
+  }
+  return iceServers;
+}
+
 // ---------- Client config ----------
-// Lets the frontend know whether to use the LiveKit SFU path or fall back to the
-// built-in WebRTC mesh, without hardcoding that decision into the client bundle.
+// Lets the frontend know whether to use the LiveKit SFU path or fall back to the built-in
+// WebRTC mesh, and hands it the ICE server list (STUN + optional TURN) — without
+// hardcoding any of that into the client bundle.
 router.get("/config", (req, res) => {
-  res.json({ livekitEnabled: isLiveKitConfigured() });
+  res.json({ livekitEnabled: isLiveKitConfigured(), iceServers: buildIceServers() });
 });
 
 // ---------- LiveKit (optional SFU video, see README) ----------

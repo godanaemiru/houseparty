@@ -5,7 +5,10 @@ const params = new URLSearchParams(window.location.search);
 const roomCode = (params.get("code") || "").toUpperCase();
 document.getElementById("room-code-pill").textContent = roomCode;
 
-const ICE_SERVERS = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+// Sensible default; overwritten from GET /api/config during init() so any TURN server the
+// operator configured server-side is used (critical for users behind symmetric NAT, who
+// can't connect with STUN alone).
+let ICE_SERVERS = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
 const videoGrid = document.getElementById("video-grid");
 const peers = {}; // userId -> { pc, info, isInitiator }  (only used in "mesh" video mode)
@@ -38,11 +41,14 @@ async function init() {
 
   try {
     const config = await api("/config");
+    if (Array.isArray(config.iceServers) && config.iceServers.length > 0) {
+      ICE_SERVERS = { iceServers: config.iceServers };
+    }
     if (config.livekitEnabled && window.LivekitClient) {
       videoMode = "livekit";
     }
   } catch (err) {
-    console.warn("Couldn't load server config, defaulting to WebRTC mesh:", err);
+    console.warn("Couldn't load server config, defaulting to STUN-only WebRTC mesh:", err);
   }
 
   connectSocket(); // chat, presence, and game events always go over our own Socket.IO server
