@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  # Runs the suite against the zero-setup local SQLite backend — what most contributors
+  # will be running locally, and the default when DATABASE_URL isn't set.
+  test-sqlite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - run: npm test
+
+  # Runs the same suite again, but wired up to a real Postgres service container, to
+  # cover the production database backend (server/db/postgres.js) used on Render.
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: housie
+          POSTGRES_PASSWORD: housie
+          POSTGRES_DB: housie
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U housie"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://housie:housie@localhost:5432/housie
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - run: npm test
