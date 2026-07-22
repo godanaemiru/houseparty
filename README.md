@@ -1,6 +1,6 @@
 # Housie — a Houseparty-style group video chat app
 
-Face-to-face group video rooms with live chat and two in-room mini-games, built as a single Node.js app (Express + Socket.IO) with a vanilla JS/HTML/CSS frontend — no build step required. Uses a zero-setup local SQLite database by default, or a managed Postgres database in production (see "Deploying" below) so accounts and rooms survive restarts.
+Face-to-face group video rooms with live chat and four in-room mini-games, built as a single Node.js app (Express + Socket.IO) with a vanilla JS/HTML/CSS frontend — no build step required, and tuned for mobile as well as desktop. Uses a zero-setup local SQLite database by default, or a managed Postgres database in production (see "Deploying" below) so accounts and rooms survive restarts.
 
 ## Features
 
@@ -10,10 +10,14 @@ Face-to-face group video rooms with live chat and two in-room mini-games, built 
 - Rooms: create a room, share a 6-character invite code/link, join from any browser
 - Group video: peer-to-peer WebRTC mesh by default (works out of the box, best for up to ~6-8 people), with an optional LiveKit SFU mode for larger rooms — see below. Includes automatic ICE-restart/reconnect handling and a clear on-screen message if camera/mic access is blocked
 - In-room text chat
-- Two mini-games:
+- Four mini-games:
   - **Trivia**: host starts a round, everyone answers 5 random questions with a countdown timer, live scoreboard, speed bonus for fast correct answers
+  - **Flag Quiz**: same format as Trivia, but the "question" is a country's flag and the options are country names
   - **Doodle**: players take turns drawing a secret word on a shared canvas while everyone else guesses in Chat; first correct guess (and the drawer) score points, then it rotates to the next drawer
+  - **Heads Up**: players take turns as the "performer," who can't see the word while everyone else can and describes it out loud; anyone but the performer taps Correct/Skip to advance through a 60-second deck, then it rotates to the next performer
+- Mobile-first UI: touch-sized controls, a sticky bottom action bar in the room so mic/camera/leave stay reachable one-thumb, a horizontally scrollable tab strip for the five side-panel tabs, safe-area support for notch phones, and inputs sized to avoid iOS's auto-zoom-on-focus
 - Installable PWA: "Add to Home Screen" / desktop install support, with an app icon, standalone window, and an in-app "Install app" button on the dashboard
+- Production-readiness basics: gzip compression, `helmet` security headers, rate limiting on auth *and* on room/friend-request creation, a `/healthz` endpoint for uptime monitors, structured JSON logging (`pino`), and a real automated test suite running in CI against both database backends
 
 ## Requirements
 
@@ -42,6 +46,8 @@ Copy `.env.example` to `.env` as a reference for what's configurable (this app r
 - `DATABASE_URL` — a Postgres connection string. When set, the app uses Postgres (`server/db/postgres.js`) instead of local SQLite (`server/db/sqlite.js`) — see "Deploying" below. Both backends implement the same interface, so nothing else changes.
 - `ALLOWED_ORIGINS` — comma-separated list of origins allowed to call the API / connect via Socket.IO (e.g. `https://myapp.com`). Defaults to allowing any origin, which is fine locally but should be locked down in production.
 - `PORT` — defaults to 3000; most hosts set this automatically.
+- `LOG_LEVEL` — `trace`/`debug`/`info`/`warn`/`error`/`silent`, defaults to `info`. Controls the structured (`pino`) logger's verbosity.
+- `PG_POOL_MAX` — max Postgres connections per running instance, defaults to `10`. Only relevant when `DATABASE_URL` is set; tune this down if you're running several instances against a database plan with a low connection cap.
 - `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` — optional, see "Scaling video past ~8 people" below.
 
 ## Testing multi-person video locally
@@ -51,6 +57,28 @@ Copy `.env.example` to `.env` as a reference for what's configurable (this app r
 3. From one account, click **Create & join** to start a room and note the room code.
 4. From the other account, enter that code under **Join a room** (or, once you're friends, just click **Join** next to their name once they're in a room).
 5. Allow camera/mic access when prompted in both windows.
+
+## Testing
+
+A real automated test suite lives in `tests/` (Node's built-in `node:test` runner — no extra test framework dependency). It spawns the actual server as a child process and exercises it over real HTTP and Socket.IO connections against a throwaway database, rather than mocking anything:
+
+- `tests/rest.test.js` — auth (register/login/duplicate/short-password/wrong-password), friends, rooms, and the `/api/config` + LiveKit-not-configured fallback
+- `tests/sockets.test.js` — token-based socket auth rejection, presence broadcasts, room join/peer-joined/WebRTC signaling relay, and full playthroughs of all four mini-games (including Heads Up's core secrecy guarantee: the performer's socket never receives the word)
+- `tests/security.test.js` — `/healthz`, helmet security headers, gzip compression, and the login rate limiter actually triggering a 429
+
+Run it locally:
+
+```bash
+npm test
+```
+
+By default this runs against a fresh temporary SQLite file (auto-cleaned up after). To run the exact same suite against Postgres instead, set `DATABASE_URL` first (e.g. pointing at a local Postgres or Docker container):
+
+```bash
+DATABASE_URL=postgres://user:pass@localhost:5432/housie_test npm test
+```
+
+**CI**: `.github/workflows/ci.yml` runs this suite on every push/PR twice — once against SQLite, once against a real Postgres 16 service container — so both database backends stay verified automatically.
 
 ## Scaling video past ~8 people (optional LiveKit SFU mode)
 
@@ -117,17 +145,22 @@ Run `npm start` locally and expose it with a tunnel (e.g. `ngrok http 3000`), th
 
 ```
 server/
-  index.js      Express + Socket.IO bootstrap, CORS lockdown, serves the frontend
+  index.js      Express + Socket.IO bootstrap: CORS lockdown, helmet, gzip compression,
+                /healthz, serves the frontend
+  logger.js     Shared structured logger (pino) — JSON in production, pretty-printed locally
   db/
     index.js    Picks sqlite.js or postgres.js based on DATABASE_URL
     sqlite.js   Local SQLite backend (node:sqlite) — zero setup, used in development
-    postgres.js Managed Postgres backend (pg) — used in production, same function names
+    postgres.js Managed Postgres backend (pg, tunable pool size) — used in production
   auth.js       JWT sign/verify + auth middleware (fails fast without JWT_SECRET in production)
-  routes.js     REST API: register, login, friends, rooms, client config, LiveKit tokens
+  routes.js     REST API: register, login, friends, rooms, client config, LiveKit tokens —
+                rate-limited (auth endpoints and room/friend creation separately)
   sockets.js    Real-time layer: presence + "friend in a room" broadcasts, room join/leave,
-                WebRTC signaling relay, chat (doubles as the Doodle guess box), Trivia and
-                Doodle game engines
+                WebRTC signaling relay, chat (doubles as the Doodle guess box), and four
+                game engines — Trivia + Flag Quiz (share one quiz engine), Doodle, Heads Up
   livekit.js    Optional LiveKit access-token minting
+tests/          node:test suite — REST, sockets/games, and security/health (see "Testing")
+.github/workflows/ci.yml  Runs the test suite against SQLite and a Postgres service container
 render.yaml     Render Blueprint: provisions the web service + a managed Postgres database
 public/
   index.html      Login / register
@@ -147,6 +180,5 @@ public/
 
 - Presence and room/game state (who's online, who's in which room, live trivia/doodle rounds) live in server memory, so they reset if the server restarts, and won't work if you try to run more than one server instance (there's no shared state like Redis between processes). Accounts, friendships, and rooms persist in the database (SQLite locally, Postgres in production) and survive restarts.
 - The WebRTC mesh mode doesn't scale much past ~6-8 participants; use the LiveKit mode above for bigger rooms.
-- No automated test suite ships with the app (a set of throwaway test scripts — REST endpoints, WebRTC/chat/Trivia/Doodle over sockets, and a full run against a real Postgres instance — was used during development but isn't part of the product). No structured logging/error tracking is set up either.
 - Local development uses Node's `node:sqlite`, which is still explicitly marked experimental and could change between Node versions. Production (Postgres) is unaffected by that.
 - Render's free Postgres tier expires after 30 days (see "Deploying" above) — fine for testing, worth knowing before you treat a free deployment as permanent.
