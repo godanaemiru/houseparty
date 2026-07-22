@@ -142,9 +142,9 @@
       const online = onlineSet.has(f.id);
       const room = friendRooms.get(f.id);
       row.innerHTML = `
-        <div class="avatar sm" style="background:${f.avatar_color}">${f.username[0].toUpperCase()}</div>
+        <div class="avatar sm" style="background:${escapeHtml(f.avatar_color)}">${escapeHtml(f.username[0].toUpperCase())}</div>
         <div class="friend-name">
-          ${f.username}
+          ${escapeHtml(f.username)}
           ${room ? `<div style="font-size:0.72rem;color:var(--pink)">🎉 in ${escapeHtml(room.name)}</div>` : ""}
         </div>
         ${room ? `<button class="join-friend-room-btn" data-code="${room.code}" style="padding:4px 10px;font-size:0.75rem">Join</button>` : `<div class="dot ${online ? "online" : ""}"></div>`}

@@ -33,6 +33,24 @@ const COLORS = ["#ff5e7e", "#7b5eff", "#5ec6ff", "#ffb85e", "#5effb0", "#ff5ec8"
 function randomColor() {
   return COLORS[Math.floor(Math.random() * COLORS.length)];
 }
+
+// Usernames are rendered into other users' dashboards, so restricting them to a safe
+// character set is defense-in-depth against stored XSS (the client also HTML-escapes on
+// render) and keeps them display-friendly. Room names are free-form but length-capped so
+// they can't blow out layouts or bloat the DB.
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_ROOM_NAME_LEN = 40;
+
+function validateRegistration({ username, email, password }) {
+  if (!username || !email || !password) return "username, email and password are required";
+  if (!USERNAME_RE.test(username)) {
+    return "Username must be 3-20 characters, using only letters, numbers, and underscores";
+  }
+  if (!EMAIL_RE.test(email)) return "Please enter a valid email address";
+  if (password.length < 6) return "Password must be at least 6 characters";
+  return null;
+}
 function randomRoomCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -57,12 +75,9 @@ router.post(
   authLimiter,
   asyncRoute(async (req, res) => {
     const { username, email, password } = req.body || {};
-    if (!username || !email || !password) {
-      return res.status(400).json({ error: "username, email and password are required" });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters" });
-    }
+    const validationError = validateRegistration({ username, email, password });
+    if (validationError) return res.status(400).json({ error: validationError });
+
     const existing = await db.findUserIdByUsernameOrEmail(username, email);
     if (existing) return res.status(409).json({ error: "Username or email already taken" });
 
@@ -143,12 +158,13 @@ router.post(
   writeLimiter,
   asyncRoute(async (req, res) => {
     const { name } = req.body || {};
+    const roomName = (typeof name === "string" ? name.trim() : "").slice(0, MAX_ROOM_NAME_LEN) || "Hangout";
     let code;
     do {
       code = randomRoomCode();
     } while (await db.roomCodeExists(code));
 
-    const room = await db.createRoom({ code, name: name || "Hangout", hostId: req.user.id });
+    const room = await db.createRoom({ code, name: roomName, hostId: req.user.id });
     res.json({ room });
   })
 );

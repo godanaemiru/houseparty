@@ -52,6 +52,41 @@ test("register rejects duplicate username/email and short passwords", async () =
   assert.equal(shortPw.status, 400);
 });
 
+test("register rejects usernames with unsafe characters or bad length", async () => {
+  // The classic stored-XSS payload — must be rejected outright, never stored.
+  const xss = await post("/api/register", {
+    username: "<img src=x onerror=alert(1)>",
+    email: "xss@test.com",
+    password: "password123",
+  });
+  assert.equal(xss.status, 400);
+
+  const spaces = await post("/api/register", { username: "has spaces", email: "s@test.com", password: "password123" });
+  assert.equal(spaces.status, 400);
+
+  const tooShort = await post("/api/register", { username: "ab", email: "ab@test.com", password: "password123" });
+  assert.equal(tooShort.status, 400);
+
+  const tooLong = await post("/api/register", { username: "a".repeat(21), email: "long@test.com", password: "password123" });
+  assert.equal(tooLong.status, 400);
+
+  const badEmail = await post("/api/register", { username: "validname", email: "not-an-email", password: "password123" });
+  assert.equal(badEmail.status, 400);
+});
+
+test("room names are trimmed and length-capped", async () => {
+  await post("/api/register", { username: "roomnamer", email: "roomnamer@test.com", password: "password123" });
+  const user = await post("/api/login", { username: "roomnamer", password: "password123" });
+
+  const room = await post("/api/rooms", { name: "  " + "x".repeat(200) + "  " }, user.data.token);
+  assert.equal(room.status, 200);
+  assert.ok(room.data.room.name.length <= 40, "room name should be capped at 40 chars");
+  assert.ok(!room.data.room.name.startsWith(" "), "room name should be trimmed");
+
+  const blank = await post("/api/rooms", { name: "   " }, user.data.token);
+  assert.equal(blank.data.room.name, "Hangout", "blank name should fall back to default");
+});
+
 test("login rejects wrong password / unknown user", async () => {
   await post("/api/register", { username: "carol", email: "carol@test.com", password: "password123" });
 

@@ -32,7 +32,9 @@
     <form id="register-form" style="display:none">
       <div class="field">
         <label>Username</label>
-        <input type="text" id="reg-username" required />
+        <input type="text" id="reg-username" required pattern="[a-zA-Z0-9_]{3,20}"
+               title="3-20 characters: letters, numbers, and underscores only"
+               autocomplete="username" />
       </div>
       <div class="field">
         <label>Email</label>
