@@ -11,6 +11,9 @@
 }
 
 * { box-sizing: border-box; }
+/* Kills the old mobile-browser 300ms tap delay and stray double-tap-to-zoom on buttons/tabs
+   without disabling pinch-zoom for the page as a whole. */
+button, .btn, .tab, .control-btn, .game-option { touch-action: manipulation; }
 
 body {
   margin: 0;
@@ -20,6 +23,7 @@ body {
   background: radial-gradient(circle at 20% 20%, #2a1250 0%, var(--bg-dark) 55%),
     linear-gradient(160deg, #1a0b30, #100620);
   background-attachment: fixed;
+  -webkit-tap-highlight-color: transparent;
 }
 
 a { color: var(--pink); }
@@ -59,12 +63,13 @@ a { color: var(--pink); }
 .field label { display: block; font-size: 0.85rem; color: var(--text-dim); margin-bottom: 6px; }
 .field input {
   width: 100%;
-  padding: 10px 12px;
+  padding: 12px;
   border-radius: 10px;
   border: 1px solid rgba(255,255,255,0.15);
   background: rgba(0,0,0,0.25);
   color: var(--text);
-  font-size: 0.95rem;
+  /* 16px stops iOS Safari auto-zooming the page when an input is focused. */
+  font-size: 16px;
 }
 .field input:focus { outline: 2px solid var(--purple); }
 
@@ -78,6 +83,8 @@ button, .btn {
   color: white;
   background: linear-gradient(90deg, var(--purple), var(--pink));
   transition: transform 0.15s ease, opacity 0.15s ease;
+  /* Comfortable thumb target on touch devices (Apple/Google's ~44px guideline). */
+  min-height: 44px;
 }
 button:hover, .btn:hover { transform: translateY(-1px); opacity: 0.95; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -114,8 +121,8 @@ button.danger { background: linear-gradient(90deg, #ff5e5e, #ff8a5e); }
 .dot.online { background: #4dff88; box-shadow: 0 0 6px #4dff88; }
 .add-friend-row { display: flex; gap: 6px; margin-top: 8px; }
 .add-friend-row input {
-  flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15);
-  background: rgba(0,0,0,0.25); color: var(--text); font-size: 0.85rem;
+  flex: 1; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.25); color: var(--text); font-size: 16px;
 }
 .logout-link { margin-top: auto; color: var(--text-dim); font-size: 0.85rem; cursor: pointer; }
 
@@ -177,8 +184,28 @@ button.danger { background: linear-gradient(90deg, #ff5e5e, #ff8a5e); }
   flex-direction: column;
   background: rgba(0,0,0,0.15);
 }
-.tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.08); }
-.tab { flex: 1; text-align: center; padding: 12px; cursor: pointer; color: var(--text-dim); font-size: 0.9rem; }
+/* Scrolls horizontally instead of squeezing tabs (now up to 5 of them) into unreadable
+   slivers on narrow screens — each tab keeps a fixed, comfortably tappable width. */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tab {
+  flex: 0 0 auto;
+  text-align: center;
+  padding: 12px 16px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
 .tab.active { color: var(--text); border-bottom: 2px solid var(--pink); font-weight: 600; }
 .tab-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 14px; }
 
@@ -193,7 +220,8 @@ button.danger { background: linear-gradient(90deg, #ff5e5e, #ff8a5e); }
 .game-options { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .game-option {
   background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1);
-  padding: 10px; border-radius: 10px; cursor: pointer; text-align: left;
+  padding: 13px 14px; border-radius: 10px; cursor: pointer; text-align: left;
+  min-height: 44px; display: flex; align-items: center;
 }
 .game-option:hover { background: rgba(255,255,255,0.15); }
 .game-option.correct { background: rgba(77,255,136,0.3); border-color: #4dff88; }
@@ -204,6 +232,32 @@ button.danger { background: linear-gradient(90deg, #ff5e5e, #ff8a5e); }
 .timer-fill { height: 100%; background: linear-gradient(90deg, var(--pink), var(--purple)); transition: width 0.2s linear; }
 
 .empty-hint { color: var(--text-dim); font-size: 0.9rem; text-align: center; margin-top: 40px; }
+
+/* Flag Quiz reuses .game-question/.game-options from Trivia, just needs the flag emoji
+   rendered big enough to actually recognize. */
+.flag-question { font-size: 3.2rem; line-height: 1; margin-bottom: 8px; }
+
+/* ---------- Heads Up ---------- */
+.headsup-role-banner { font-size: 0.85rem; color: var(--text-dim); text-align: center; }
+.headsup-word-big {
+  font-size: 1.8rem;
+  font-weight: 800;
+  text-align: center;
+  padding: 22px 12px;
+  border-radius: var(--radius);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  word-break: break-word;
+}
+.headsup-word-big.hidden-for-performer {
+  font-size: 2.6rem;
+  color: var(--text-dim);
+}
+.headsup-actions { display: flex; gap: 12px; width: 100%; }
+.headsup-actions button { flex: 1; min-height: 56px; font-size: 1.1rem; }
+.headsup-actions .skip-btn { background: rgba(255,255,255,0.1); }
+.headsup-actions .correct-btn { background: linear-gradient(90deg, #4dff88, #5ec6ff); color: #10331f; }
+.headsup-score-tally { font-size: 0.85rem; color: var(--text-dim); text-align: center; }
 
 /* ==========================================================================
    Mobile layout (phones/small tablets in portrait — roughly up to a large
@@ -220,35 +274,69 @@ button.danger { background: linear-gradient(90deg, #ff5e5e, #ff8a5e); }
     width: 100%;
     flex-shrink: 1;
     padding: 16px;
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
     border-right: none;
     border-bottom: 1px solid rgba(255,255,255,0.06);
+    /* Friends list is secondary on a phone — put "start/join a room" first so it's the
+       first thing a thumb hits, without touching the underlying HTML order. */
+    order: 2;
   }
   #friends-list { max-height: 160px; overflow-y: auto; }
   .logout-link { margin-top: 16px; }
 
-  .main-content { padding: 24px 16px; }
+  .main-content {
+    padding: 20px 16px;
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+    order: 1;
+  }
+  .hero { margin-bottom: 20px; }
   .hero h1 { font-size: 1.4rem; }
-  .actions-row { gap: 12px; }
+  .actions-row { gap: 12px; margin-bottom: 24px; }
   .action-card { width: 100%; }
   #open-rooms-section { max-width: 100%; }
 
   /* ---- Room ---- */
-  .room-shell { flex-direction: column; min-height: auto; }
-  .room-main { padding: 12px; min-height: 46vh; }
+  .room-shell { flex-direction: column; min-height: 100vh; }
+  .room-main {
+    padding: 10px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    min-height: 0;
+    flex: 1 1 auto;
+  }
   .room-header { flex-wrap: wrap; gap: 8px; }
-  .video-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
-  .room-controls { margin-top: 12px; }
+  .video-grid { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+
+  /* A sticky bottom bar keeps mic/camera/leave reachable with one thumb regardless of
+     how tall the video grid gets, and never gets pushed off-screen. */
+  .room-controls {
+    position: sticky;
+    bottom: 0;
+    margin-top: 10px;
+    padding: 10px 0;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    background: rgba(21,8,38,0.85);
+    backdrop-filter: blur(10px);
+    border-radius: var(--radius) var(--radius) 0 0;
+    z-index: 5;
+  }
+  .control-btn { width: 52px; height: 52px; font-size: 1.2rem; }
 
   .side-panel {
     width: 100%;
-    height: 48vh;
+    height: 44vh;
+    flex-shrink: 0;
     border-left: none;
     border-top: 1px solid rgba(255,255,255,0.08);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
 
 @media (max-width: 420px) {
-  .room-code-pill { font-size: 0.85rem; padding: 5px 10px; }
-  #copy-link-btn { font-size: 0.8rem; padding: 8px 12px; }
-  .control-btn { width: 44px; height: 44px; }
+  .room-code-pill { font-size: 0.8rem; padding: 5px 10px; }
+  #copy-link-btn { font-size: 0.78rem; padding: 8px 10px; }
+  .headsup-word-big { font-size: 1.5rem; padding: 16px 10px; }
+  .headsup-word-big.hidden-for-performer { font-size: 2.1rem; }
+  .flag-question { font-size: 2.6rem; }
 }

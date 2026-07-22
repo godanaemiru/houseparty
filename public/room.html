@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Housie &mdash; Room</title>
 <link rel="stylesheet" href="/css/style.css" />
 <link rel="manifest" href="/manifest.json" />
@@ -28,9 +28,11 @@
 
   <div class="side-panel">
     <div class="tabs">
-      <div class="tab active" data-tab="chat">Chat</div>
+      <div class="tab active" data-tab="chat">💬 Chat</div>
       <div class="tab" data-tab="game">🎮 Trivia</div>
+      <div class="tab" data-tab="flags">🏳️ Flags</div>
       <div class="tab" data-tab="doodle">🎨 Draw</div>
+      <div class="tab" data-tab="headsup">🙈 Heads Up</div>
     </div>
 
     <div class="tab-content" id="chat-tab">
@@ -49,6 +51,14 @@
       </div>
     </div>
 
+    <div class="tab-content" id="flags-tab" style="display:none">
+      <div class="game-panel" id="flags-panel">
+        <p class="empty-hint" style="margin-top: 10px">Guess the country from its flag.</p>
+        <button id="start-flags-btn">Start Flag Quiz</button>
+        <div class="scoreboard" id="flags-scoreboard-idle"></div>
+      </div>
+    </div>
+
     <div class="tab-content" id="doodle-tab" style="display:none">
       <div id="doodle-idle-panel" class="game-panel">
         <p class="empty-hint" style="margin-top: 10px">Take turns drawing while everyone else guesses in Chat.</p>
@@ -60,6 +70,23 @@
         <div id="doodle-word-display" style="text-align:center; font-weight:700; letter-spacing:3px; font-size:1.1rem"></div>
         <canvas id="doodle-canvas" width="280" height="280" style="width:100%; aspect-ratio:1/1; background:#fff; border-radius:12px; touch-action:none; cursor:crosshair"></canvas>
         <p id="doodle-hint" class="empty-hint" style="margin:0">Guess in the Chat tab!</p>
+      </div>
+    </div>
+
+    <div class="tab-content" id="headsup-tab" style="display:none">
+      <div id="headsup-idle-panel" class="game-panel">
+        <p class="empty-hint" style="margin-top: 10px">Take turns holding the "phone to your forehead" — everyone else describes the word, you guess out loud, and anyone can tap Correct once you get it.</p>
+        <button id="start-headsup-btn">Start Heads Up</button>
+      </div>
+      <div id="headsup-active-panel" style="display:none; flex-direction:column; gap:12px; height:100%">
+        <div id="headsup-status" class="headsup-role-banner"></div>
+        <div class="timer-bar"><div class="timer-fill" id="headsup-timer-fill" style="width:100%"></div></div>
+        <div id="headsup-word-display" class="headsup-word-big"></div>
+        <div class="headsup-actions" id="headsup-actions" style="display:none">
+          <button class="skip-btn" id="headsup-skip-btn">⏭️ Skip</button>
+          <button class="correct-btn" id="headsup-correct-btn">✅ Correct</button>
+        </div>
+        <div id="headsup-tally" class="headsup-score-tally"></div>
       </div>
     </div>
   </div>

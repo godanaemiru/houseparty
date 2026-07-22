@@ -18,9 +18,17 @@ let localStream = null;
 let videoMode = "mesh";
 let livekitRoom = null;
 
+// Caps resolution/framerate instead of asking for the camera's default (often 1080p+),
+// which matters a lot on the mesh: every extra pixel/frame is duplicated N-1 times, once
+// per peer. 720p/24fps is plenty for a face-in-a-grid video chat.
+const CAMERA_CONSTRAINTS = {
+  video: { width: { ideal: 1280, max: 1280 }, height: { ideal: 720, max: 720 }, frameRate: { ideal: 24, max: 24 } },
+  audio: true,
+};
+
 async function init() {
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localStream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS);
   } catch (err) {
     console.warn("Camera/mic unavailable, joining as viewer only:", err);
     localStream = new MediaStream();
@@ -73,7 +81,10 @@ async function initLiveKit() {
     });
 
     await livekitRoom.connect(url, token);
-    await livekitRoom.localParticipant.setCameraEnabled(true);
+    // Match the same 720p cap used in mesh mode — LiveKit still forwards media through a
+    // server, so keeping publish resolution modest reduces its bandwidth/CPU load too.
+    const h720 = window.LivekitClient.VideoPresets && window.LivekitClient.VideoPresets.h720;
+    await livekitRoom.localParticipant.setCameraEnabled(true, h720 ? { resolution: h720.resolution } : undefined);
     await livekitRoom.localParticipant.setMicrophoneEnabled(true);
   } catch (err) {
     console.error("LiveKit connection failed, falling back to WebRTC mesh:", err);
@@ -106,7 +117,7 @@ function showMediaPermissionNotice(err) {
   retryBtn.style.flexShrink = "0";
   retryBtn.onclick = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS);
       localStream.getTracks().forEach((t) => t.stop());
       localStream = stream;
       const meTile = document.getElementById("tile-me");
@@ -269,14 +280,28 @@ function connectSocket() {
     appendChatMessage(username, text, userId === me.id);
   });
 
-  // Trivia game
-  socket.on("game:started", () => {
-    document.getElementById("start-game-btn").disabled = true;
+  // Trivia + Flag Quiz (both driven by the shared quiz UI factory below)
+  socket.on("game:started", triviaUI.onStarted);
+  socket.on("game:question", triviaUI.renderQuestion);
+  socket.on("game:reveal", triviaUI.renderReveal);
+  socket.on("game:end", triviaUI.renderEnd);
+  socket.on("game:answer-result", ({ scores }) => triviaUI.renderLiveScores(scores));
+
+  socket.on("flags:started", flagsUI.onStarted);
+  socket.on("flags:question", flagsUI.renderQuestion);
+  socket.on("flags:reveal", flagsUI.renderReveal);
+  socket.on("flags:end", flagsUI.renderEnd);
+  socket.on("flags:answer-result", ({ scores }) => flagsUI.renderLiveScores(scores));
+
+  // Heads Up
+  socket.on("headsup:started", () => {
+    document.getElementById("start-headsup-btn").disabled = true;
   });
-  socket.on("game:question", renderQuestion);
-  socket.on("game:reveal", renderReveal);
-  socket.on("game:end", renderGameEnd);
-  socket.on("game:answer-result", ({ scores }) => renderLiveScores(scores));
+  socket.on("headsup:round-start", renderHeadsUpRound);
+  socket.on("headsup:word", renderHeadsUpWord);
+  socket.on("headsup:progress", renderHeadsUpProgress);
+  socket.on("headsup:round-end", renderHeadsUpRoundEnd);
+  socket.on("headsup:end", renderHeadsUpEnd);
 
   // Doodle game
   socket.on("doodle:started", startedDoodleUI);
@@ -400,13 +425,14 @@ document.getElementById("copy-link-btn").onclick = async () => {
 };
 
 // ---------- Tabs ----------
+const TAB_NAMES = ["chat", "game", "flags", "doodle", "headsup"];
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.onclick = () => {
     document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
-    document.getElementById("chat-tab").style.display = tab.dataset.tab === "chat" ? "flex" : "none";
-    document.getElementById("game-tab").style.display = tab.dataset.tab === "game" ? "flex" : "none";
-    document.getElementById("doodle-tab").style.display = tab.dataset.tab === "doodle" ? "flex" : "none";
+    for (const name of TAB_NAMES) {
+      document.getElementById(`${name}-tab`).style.display = tab.dataset.tab === name ? "flex" : "none";
+    }
   };
 });
 
@@ -445,64 +471,163 @@ document.getElementById("chat-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendChat();
 });
 
-// ---------- Trivia ----------
-document.getElementById("start-game-btn").onclick = () => socket.emit("game:start");
+// ---------- Trivia + Flag Quiz ----------
+// Both are "N multiple-choice questions with a countdown timer and live scoreboard" —
+// this factory holds that UI logic once, parameterized by event-name prefix and which
+// DOM panel to render into, so Flag Quiz didn't need its own copy-pasted 80 lines.
+function createQuizUI({ prefix, panelId, startBtnId, questionExtraClass }) {
+  let timer = null;
 
-let questionTimer = null;
-function renderQuestion({ questionId, index, total, question, options, timeLimit }) {
-  const panel = document.getElementById("game-panel");
-  panel.innerHTML = `
-    <div style="width:100%">
-      <div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--text-dim);margin-bottom:8px">
-        <span>Question ${index + 1}/${total}</span>
+  function renderQuestion({ questionId, index, total, question, options, timeLimit }) {
+    const panel = document.getElementById(panelId);
+    panel.innerHTML = `
+      <div style="width:100%">
+        <div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--text-dim);margin-bottom:8px">
+          <span>Question ${index + 1}/${total}</span>
+        </div>
+        <div class="timer-bar"><div class="timer-fill" id="${prefix}-timer-fill" style="width:100%"></div></div>
       </div>
-      <div class="timer-bar"><div class="timer-fill" id="timer-fill" style="width:100%"></div></div>
-    </div>
-    <div class="game-question">${escapeHtml(question)}</div>
-    <div class="game-options" id="game-options"></div>
-  `;
-  const optionsEl = document.getElementById("game-options");
-  options.forEach((opt, i) => {
-    const btn = document.createElement("div");
-    btn.className = "game-option";
-    btn.textContent = opt;
-    btn.onclick = () => {
-      if (optionsEl.dataset.answered) return;
-      optionsEl.dataset.answered = "1";
-      btn.style.outline = "2px solid var(--blue)";
-      socket.emit("game:answer", { questionId, answerIndex: i });
-    };
-    optionsEl.appendChild(btn);
-  });
+      <div class="game-question ${questionExtraClass || ""}">${escapeHtml(question)}</div>
+      <div class="game-options" id="${prefix}-options"></div>
+    `;
+    const optionsEl = document.getElementById(`${prefix}-options`);
+    options.forEach((opt, i) => {
+      const btn = document.createElement("div");
+      btn.className = "game-option";
+      btn.textContent = opt;
+      btn.onclick = () => {
+        if (optionsEl.dataset.answered) return;
+        optionsEl.dataset.answered = "1";
+        btn.style.outline = "2px solid var(--blue)";
+        socket.emit(`${prefix}:answer`, { questionId, answerIndex: i });
+      };
+      optionsEl.appendChild(btn);
+    });
+
+    const startedAt = Date.now();
+    clearInterval(timer);
+    timer = setInterval(() => {
+      const pct = Math.max(0, 100 - ((Date.now() - startedAt) / timeLimit) * 100);
+      const fill = document.getElementById(`${prefix}-timer-fill`);
+      if (fill) fill.style.width = pct + "%";
+      if (pct <= 0) clearInterval(timer);
+    }, 100);
+  }
+
+  function renderReveal({ correctIndex, scores }) {
+    clearInterval(timer);
+    const optionsEl = document.getElementById(`${prefix}-options`);
+    if (optionsEl) {
+      [...optionsEl.children].forEach((btn, i) => {
+        btn.classList.add(i === correctIndex ? "correct" : "wrong");
+      });
+    }
+    renderLiveScores(scores);
+  }
+
+  function renderLiveScores(scores) {
+    let board = document.getElementById(`${prefix}-live-scoreboard`);
+    const panel = document.getElementById(panelId);
+    if (!board) {
+      board = document.createElement("div");
+      board.className = "scoreboard";
+      board.id = `${prefix}-live-scoreboard`;
+      panel.appendChild(board);
+    }
+    board.innerHTML =
+      "<div class='section-title'>Scores</div>" +
+      scores.map((s) => `<div class="score-row"><span>${escapeHtml(s.username)}</span><span>${s.score}</span></div>`).join("");
+  }
+
+  function renderEnd({ scores }) {
+    clearInterval(timer);
+    const panel = document.getElementById(panelId);
+    const winner = scores[0];
+    panel.innerHTML = `
+      <p style="font-size:1.1rem;font-weight:700">${winner ? escapeHtml(winner.username) + " wins! 🎉" : "Game over"}</p>
+      <div class="scoreboard">
+        <div class="section-title">Final Scores</div>
+        ${scores.map((s) => `<div class="score-row"><span>${escapeHtml(s.username)}</span><span>${s.score}</span></div>`).join("")}
+      </div>
+      <button id="${prefix}-start-btn-2">Play again</button>
+    `;
+    document.getElementById(`${prefix}-start-btn-2`).onclick = () => socket.emit(`${prefix}:start`);
+  }
+
+  document.getElementById(startBtnId).onclick = () => socket.emit(`${prefix}:start`);
+
+  return {
+    renderQuestion,
+    renderReveal,
+    renderLiveScores,
+    renderEnd,
+    onStarted: () => { document.getElementById(startBtnId).disabled = true; },
+  };
+}
+
+const triviaUI = createQuizUI({ prefix: "game", panelId: "game-panel", startBtnId: "start-game-btn" });
+const flagsUI = createQuizUI({
+  prefix: "flags",
+  panelId: "flags-panel",
+  startBtnId: "start-flags-btn",
+  questionExtraClass: "flag-question",
+});
+
+// ---------- Heads Up ----------
+document.getElementById("start-headsup-btn").onclick = () => socket.emit("headsup:start");
+document.getElementById("headsup-correct-btn").onclick = () => socket.emit("headsup:correct");
+document.getElementById("headsup-skip-btn").onclick = () => socket.emit("headsup:skip");
+
+let headsUpTimerInterval = null;
+let isHeadsUpPerformer = false;
+
+function startedHeadsUpUI() {
+  document.getElementById("headsup-idle-panel").style.display = "none";
+  document.getElementById("headsup-active-panel").style.display = "flex";
+}
+
+function renderHeadsUpRound({ performerId, performerName, round, totalRounds, timeLimit }) {
+  startedHeadsUpUI();
+  isHeadsUpPerformer = performerId === me.id;
+
+  document.getElementById("headsup-status").textContent = isHeadsUpPerformer
+    ? `Your turn! Don't look — everyone else can see the word and will describe it. (Round ${round}/${totalRounds})`
+    : `${performerName} is guessing — describe the word out loud! (Round ${round}/${totalRounds})`;
+  document.getElementById("headsup-actions").style.display = isHeadsUpPerformer ? "none" : "flex";
+
+  const wordEl = document.getElementById("headsup-word-display");
+  wordEl.classList.toggle("hidden-for-performer", isHeadsUpPerformer);
+  wordEl.textContent = isHeadsUpPerformer ? "🙈" : "…";
+  document.getElementById("headsup-tally").textContent = "";
 
   const startedAt = Date.now();
-  clearInterval(questionTimer);
-  questionTimer = setInterval(() => {
+  clearInterval(headsUpTimerInterval);
+  headsUpTimerInterval = setInterval(() => {
     const pct = Math.max(0, 100 - ((Date.now() - startedAt) / timeLimit) * 100);
-    const fill = document.getElementById("timer-fill");
+    const fill = document.getElementById("headsup-timer-fill");
     if (fill) fill.style.width = pct + "%";
-    if (pct <= 0) clearInterval(questionTimer);
+    if (pct <= 0) clearInterval(headsUpTimerInterval);
   }, 100);
 }
 
-function renderReveal({ correctIndex, scores }) {
-  clearInterval(questionTimer);
-  const optionsEl = document.getElementById("game-options");
-  if (optionsEl) {
-    [...optionsEl.children].forEach((btn, i) => {
-      btn.classList.add(i === correctIndex ? "correct" : "wrong");
-    });
-  }
-  renderLiveScores(scores);
+// Sent only to non-performer sockets — the performer's client never receives this event.
+function renderHeadsUpWord({ word }) {
+  if (isHeadsUpPerformer) return; // extra guard, shouldn't be reachable
+  document.getElementById("headsup-word-display").textContent = word;
 }
 
-function renderLiveScores(scores) {
-  let board = document.getElementById("live-scoreboard");
-  const panel = document.getElementById("game-panel");
+function renderHeadsUpProgress({ wordsThisRound, scores }) {
+  document.getElementById("headsup-tally").textContent = `Words this round: ${wordsThisRound}`;
+  renderHeadsUpScores(scores);
+}
+
+function renderHeadsUpScores(scores) {
+  let board = document.getElementById("headsup-scoreboard");
+  const panel = document.getElementById("headsup-active-panel");
   if (!board) {
     board = document.createElement("div");
     board.className = "scoreboard";
-    board.id = "live-scoreboard";
+    board.id = "headsup-scoreboard";
     panel.appendChild(board);
   }
   board.innerHTML =
@@ -510,19 +635,32 @@ function renderLiveScores(scores) {
     scores.map((s) => `<div class="score-row"><span>${escapeHtml(s.username)}</span><span>${s.score}</span></div>`).join("");
 }
 
-function renderGameEnd({ scores }) {
-  clearInterval(questionTimer);
-  const panel = document.getElementById("game-panel");
+function renderHeadsUpRoundEnd({ performerName, wordsThisRound, scores }) {
+  clearInterval(headsUpTimerInterval);
+  const wordEl = document.getElementById("headsup-word-display");
+  wordEl.classList.remove("hidden-for-performer");
+  wordEl.textContent = `${escapeHtml(performerName)} got ${wordsThisRound} word${wordsThisRound === 1 ? "" : "s"}!`;
+  document.getElementById("headsup-actions").style.display = "none";
+  renderHeadsUpScores(scores);
+}
+
+function renderHeadsUpEnd({ scores }) {
+  clearInterval(headsUpTimerInterval);
+  isHeadsUpPerformer = false;
   const winner = scores[0];
-  panel.innerHTML = `
+  const activePanel = document.getElementById("headsup-active-panel");
+  activePanel.style.display = "none";
+  const idlePanel = document.getElementById("headsup-idle-panel");
+  idlePanel.style.display = "flex";
+  idlePanel.innerHTML = `
     <p style="font-size:1.1rem;font-weight:700">${winner ? escapeHtml(winner.username) + " wins! 🎉" : "Game over"}</p>
     <div class="scoreboard">
       <div class="section-title">Final Scores</div>
       ${scores.map((s) => `<div class="score-row"><span>${escapeHtml(s.username)}</span><span>${s.score}</span></div>`).join("")}
     </div>
-    <button id="start-game-btn-2">Play again</button>
+    <button id="start-headsup-btn-2">Play again</button>
   `;
-  document.getElementById("start-game-btn-2").onclick = () => socket.emit("game:start");
+  document.getElementById("start-headsup-btn-2").onclick = () => socket.emit("headsup:start");
 }
 
 // ---------- Doodle (drawing & guessing) ----------
