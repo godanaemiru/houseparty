@@ -27,6 +27,10 @@ async function startServer(extraEnv = {}) {
     JWT_SECRET: "test-secret-not-for-production",
     SQLITE_PATH: sqlitePath,
     LOG_LEVEL: "silent",
+    // Functional tests fire lots of register/login calls in sequence; a high default keeps
+    // the shared auth rate limiter from throttling them. Tests that actually exercise the
+    // limiter (security.test.js) override this with a low value via extraEnv.
+    AUTH_RATE_LIMIT: "1000",
     ...extraEnv,
   };
 

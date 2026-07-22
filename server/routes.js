@@ -10,9 +10,10 @@ const router = express.Router();
 
 // Auth endpoints are brute-force targets — cap attempts per IP. Generous enough for a
 // real user fumbling their password a few times, tight enough to blunt automated guessing.
+// Configurable via AUTH_RATE_LIMIT (per-IP attempts per 15 min) for tuning per deployment.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 20,
+  limit: Number.parseInt(process.env.AUTH_RATE_LIMIT, 10) || 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many attempts. Please try again in a few minutes." },

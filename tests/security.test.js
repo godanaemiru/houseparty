@@ -7,7 +7,9 @@ const { startServer } = require("./helpers/server");
 let server;
 
 test.before(async () => {
-  server = await startServer();
+  // Low auth limit so the rate-limit test below can actually trip it within a handful of
+  // attempts (functional tests use the helper's high default instead).
+  server = await startServer({ AUTH_RATE_LIMIT: "20" });
 });
 
 test.after(async () => {
