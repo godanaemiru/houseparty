@@ -83,6 +83,8 @@ DATABASE_URL=postgres://user:pass@localhost:5432/housie_test npm test
 
 **CI**: `.github/workflows/ci.yml` runs this suite on every push/PR twice — once against SQLite, once against a real Postgres 16 service container — so both database backends stay verified automatically.
 
+Running the real-time tests against Postgres specifically matters: because SQLite queries resolve almost instantly, timing bugs in the Socket.IO layer can hide there and only appear against a networked database. One real example this caught — socket listeners were being registered after an `await` on a DB query, so a `room:join` emitted immediately on connect was silently dropped and the room hung with no error. It reproduced constantly on Postgres and almost never on SQLite.
+
 ## Making video connect reliably (TURN)
 
 The WebRTC mesh needs to punch through each participant's NAT/firewall. A public STUN server (always included) handles that for most home networks, but users behind **symmetric NAT** — very common on mobile carriers and corporate/university networks — can only connect through a **TURN relay** that forwards their media. Without one, those users' video tiles simply never appear, with no obvious error.
@@ -115,6 +117,8 @@ The app ships with a manifest, icons, and a service worker, so browsers offer to
 - **iOS Safari**: Share button → "Add to Home Screen" (iOS doesn't support the automatic install prompt, so there's no in-app button there — this is a platform limitation, not a bug).
 
 **Important**: like camera access, service workers require **HTTPS** (localhost is exempt). On plain HTTP over a non-localhost address, `sw.js` will fail to register — this is expected and is logged as a warning in the browser console, not an error in the app. Once you deploy behind HTTPS (see below), installability works automatically.
+
+**Known iOS limitation — video calls from the home-screen icon.** When launched from its home-screen icon, iOS runs the app in a restricted WebKit context ("standalone" mode) where camera/mic access and WebRTC peer connections are unreliable — participants can end up unable to see or hear themselves *or* anyone else. This is an iOS platform limitation (well documented across WebRTC-in-PWA discussions), not a bug in this app, and it doesn't affect Android's home-screen install. The app detects this (`navigator.standalone === true`) and shows a banner on the dashboard and in the room offering a one-tap "Open in Safari" link, which reliably escapes the restricted context — video calling is fully reliable in a normal Safari tab. There's no code-level fix for the standalone case itself; if Apple loosens this restriction in a future iOS release, this is the first place to re-test.
 
 If you change any static file in `public/`, bump `CACHE_NAME` in `public/sw.js` (e.g. `housie-shell-v2`) so installed clients pick up the update instead of serving a stale cached copy.
 

@@ -9,7 +9,10 @@ const { startServer } = require("./helpers/server");
 let server;
 
 test.before(async () => {
-  server = await startServer();
+  // Short room grace period so the "empty room gets retired" test doesn't have to wait the
+  // production default (2 min), while still being long enough that the refresh/rejoin test
+  // exercises a realistic reconnect window.
+  server = await startServer({ ROOM_GRACE_MS: "1000" });
 });
 
 test.after(async () => {
@@ -216,6 +219,114 @@ test("doodle game: drawer draws, guesser guesses the right word and scores", asy
   sPam.close();
 });
 
+test("room:join emitted immediately on connect is not dropped (listener-race regression)", async () => {
+  // Regression guard: socket event listeners must be registered synchronously in the
+  // connection handler. When they were registered after an `await` on a DB call, a client
+  // that emitted room:join right away had the event silently discarded — no room:joined,
+  // no room:error, just a hung room. Barely reproducible on SQLite, constant on Postgres.
+  const vic = await registerAndLogin("vic");
+  const room = await post("/api/rooms", { name: "RaceCheck" }, vic.token);
+  const code = room.data.room.code;
+
+  const s = connect(vic.token);
+  // Emit in the same tick the connection opens — the worst case for the race.
+  s.on("connect", () => s.emit("room:join", { code, avatarColor: "#0f0" }));
+
+  const outcome = await Promise.race([
+    waitFor(s, "room:joined", 8000).then(() => "joined"),
+    waitFor(s, "room:error", 8000).then(() => "error"),
+  ]);
+  assert.equal(outcome, "joined", "an immediate room:join must be handled, not dropped");
+  s.close();
+});
+
+test("refreshing while alone in a room does NOT destroy the room (regression)", async () => {
+  const rex = await registerAndLogin("rex");
+  const room = await post("/api/rooms", { name: "Refreshable" }, rex.token);
+  const code = room.data.room.code;
+
+  // Join, then drop the connection the way a page refresh does.
+  const first = connect(rex.token);
+  await waitFor(first, "connect");
+  first.emit("room:join", { code, avatarColor: "#abc" });
+  await waitFor(first, "room:joined");
+  first.close();
+
+  // Give the server a moment to process the disconnect.
+  await new Promise((r) => setTimeout(r, 400));
+
+  // Reconnect like the refreshed page would — this must still work.
+  const second = connect(rex.token);
+  await waitFor(second, "connect");
+  second.emit("room:join", { code, avatarColor: "#abc" });
+  const rejoined = await Promise.race([
+    waitFor(second, "room:joined").then((d) => ({ ok: true, d })),
+    waitFor(second, "room:error").then((d) => ({ ok: false, d })),
+  ]);
+  assert.ok(rejoined.ok, "should be able to rejoin after a refresh, not get 'Room not found'");
+  second.close();
+});
+
+test("rejoining mid-round returns a game snapshot so the UI can resync", async () => {
+  const sam = await registerAndLogin("samq");
+  const tia = await registerAndLogin("tiaq");
+  const room = await post("/api/rooms", { name: "Resync" }, sam.token);
+  const code = room.data.room.code;
+
+  const sSam = connect(sam.token);
+  const sTia = connect(tia.token);
+  await Promise.all([waitFor(sSam, "connect"), waitFor(sTia, "connect")]);
+  sSam.emit("room:join", { code, avatarColor: "#111" });
+  await waitFor(sSam, "room:joined");
+  sTia.emit("room:join", { code, avatarColor: "#222" });
+  await waitFor(sTia, "room:joined");
+
+  // Start trivia, wait for a question to be live.
+  const qPromise = waitFor(sSam, "game:question");
+  sSam.emit("game:start");
+  const question = await qPromise;
+
+  // Tia "refreshes" mid-question.
+  sTia.close();
+  await new Promise((r) => setTimeout(r, 300));
+  const sTia2 = connect(tia.token);
+  await waitFor(sTia2, "connect");
+  sTia2.emit("room:join", { code, avatarColor: "#222" });
+  const joined = await waitFor(sTia2, "room:joined");
+
+  assert.ok(joined.games, "room:joined should carry a games snapshot");
+  assert.ok(joined.games.game, "the in-progress trivia round should be in the snapshot");
+  assert.equal(joined.games.game.questionId, question.questionId);
+  assert.ok(joined.games.game.remainingMs > 0, "snapshot should report time left in the round");
+  assert.deepEqual(joined.games.game.options, question.options);
+
+  sSam.close();
+  sTia2.close();
+});
+
+test("starting Doodle or Heads Up alone reports needing more players", async () => {
+  const uma = await registerAndLogin("uma");
+  const room = await post("/api/rooms", { name: "Solo" }, uma.token);
+  const code = room.data.room.code;
+
+  const sUma = connect(uma.token);
+  await waitFor(sUma, "connect");
+  sUma.emit("room:join", { code, avatarColor: "#fff" });
+  await waitFor(sUma, "room:joined");
+
+  const doodleNotice = waitFor(sUma, "doodle:need-players");
+  sUma.emit("doodle:start");
+  const d = await doodleNotice;
+  assert.match(d.message, /2 people/);
+
+  const headsupNotice = waitFor(sUma, "headsup:need-players");
+  sUma.emit("headsup:start");
+  const h = await headsupNotice;
+  assert.match(h.message, /2 people/);
+
+  sUma.close();
+});
+
 test("room is deactivated once the last member leaves", async () => {
   const tess = await registerAndLogin("tess");
   const room = await post("/api/rooms", { name: "Ephemeral" }, tess.token);
@@ -236,9 +347,10 @@ test("room is deactivated once the last member leaves", async () => {
   sTess.emit("room:leave");
   sTess.close();
 
-  // deactivateRoom is fire-and-forget, so poll briefly for the 404 instead of racing it.
+  // Deactivation is deferred by ROOM_GRACE_MS (1s in tests) and fire-and-forget, so poll
+  // for the 404 rather than racing it.
   let finalStatus = 200;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 40; i++) {
     const res = await fetch(server.baseUrl + `/api/rooms/${code}`, {
       headers: { Authorization: `Bearer ${tess.token}` },
     });

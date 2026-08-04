@@ -29,7 +29,42 @@ const CAMERA_CONSTRAINTS = {
   audio: true,
 };
 
+// iOS home-screen apps (launched via "Add to Home Screen", running in standalone/
+// fullscreen mode) use a restricted WebKit context where camera/mic access and WebRTC
+// peer connections are unreliable — an iOS platform limitation, not something this app's
+// code can work around. `navigator.standalone` is true only in that iOS launch context
+// (undefined everywhere else, including Android's standalone PWA mode, which doesn't have
+// this problem). The one reliable escape hatch is a `target="_blank"` link, which iOS
+// kicks out to real Safari instead of opening inside the limited home-screen shell.
+function isIOSStandalone() {
+  return window.navigator.standalone === true;
+}
+
+function showIOSStandaloneNotice() {
+  const banner = document.createElement("div");
+  banner.id = "ios-standalone-notice";
+  banner.style.cssText =
+    "background:rgba(255,184,94,0.15);border:1px solid rgba(255,184,94,0.4);color:var(--text);" +
+    "padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:0.85rem;display:flex;" +
+    "align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;";
+  banner.innerHTML =
+    "<span>Video calls aren't reliable in iPhone home-screen apps (an Apple limitation) — open this room in Safari instead.</span>";
+
+  const link = document.createElement("a");
+  link.className = "btn secondary";
+  link.textContent = "Open in Safari";
+  link.href = window.location.href;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.style.cssText = "flex-shrink:0; text-decoration:none; white-space:nowrap;";
+  banner.appendChild(link);
+
+  videoGrid.parentElement.insertBefore(banner, videoGrid);
+}
+
 async function init() {
+  if (isIOSStandalone()) showIOSStandaloneNotice();
+
   try {
     localStream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS);
   } catch (err) {
@@ -248,7 +283,11 @@ function connectSocket() {
     window.location.href = "/dashboard.html";
   });
 
-  socket.on("room:joined", ({ peers: existingPeers }) => {
+  socket.on("room:joined", ({ peers: existingPeers, games }) => {
+    // Restore any round already in progress (e.g. after a refresh or a dropped
+    // connection) before touching video, so the panels aren't stuck on "Start".
+    restoreGamesFromSnapshot(games);
+
     if (videoMode !== "mesh") return; // LiveKit handles peer video itself
     for (const p of existingPeers) {
       createPeerConnection(p.userId, true, p);
@@ -313,6 +352,8 @@ function connectSocket() {
   socket.on("headsup:started", () => {
     document.getElementById("start-headsup-btn").disabled = true;
   });
+  socket.on("headsup:need-players", ({ message }) => showGameNotice("headsup-idle-panel", message));
+  socket.on("doodle:need-players", ({ message }) => showGameNotice("doodle-idle-panel", message));
   socket.on("headsup:round-start", renderHeadsUpRound);
   socket.on("headsup:word", renderHeadsUpWord);
   socket.on("headsup:progress", renderHeadsUpProgress);
@@ -595,11 +636,24 @@ function createQuizUI({ prefix, panelId, startBtnId, questionExtraClass }) {
 
   document.getElementById(startBtnId).onclick = () => socket.emit(`${prefix}:start`);
 
+  // Re-render a question that was already running when we joined/rejoined. Same markup as
+  // renderQuestion, but the countdown resumes from the time actually left in the round,
+  // and options are locked if this user already answered.
+  function restore(snap) {
+    renderQuestion({ ...snap, timeLimit: snap.remainingMs || snap.timeLimit });
+    if (snap.alreadyAnswered) {
+      const optionsEl = document.getElementById(`${prefix}-options`);
+      if (optionsEl) optionsEl.dataset.answered = "1";
+    }
+    if (snap.scores && snap.scores.length) renderLiveScores(snap.scores);
+  }
+
   return {
     renderQuestion,
     renderReveal,
     renderLiveScores,
     renderEnd,
+    restore,
     onStarted: () => { document.getElementById(startBtnId).disabled = true; },
   };
 }
@@ -611,6 +665,83 @@ const flagsUI = createQuizUI({
   startBtnId: "start-flags-btn",
   questionExtraClass: "flag-question",
 });
+
+// Small inline message inside a game's idle panel (e.g. "you need 2 players"), instead of
+// an alert() or a silently-confusing instant "Game over".
+function showGameNotice(panelId, message) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  let notice = panel.querySelector(".game-notice");
+  if (!notice) {
+    notice = document.createElement("p");
+    notice.className = "game-notice";
+    notice.style.cssText =
+      "color:var(--text-dim);font-size:0.85rem;margin:8px 0 0;padding:8px 10px;" +
+      "background:rgba(255,184,94,0.12);border:1px solid rgba(255,184,94,0.35);border-radius:8px;";
+    panel.appendChild(notice);
+  }
+  notice.textContent = message;
+}
+
+// Re-render whatever was already in progress when we (re)joined. Each branch mirrors the
+// live event handler for that game, but seeded from the server's snapshot and with the
+// timer bar started from the *remaining* time rather than the full round length.
+function restoreGamesFromSnapshot(games) {
+  if (!games) return;
+
+  if (games.game) triviaUI.restore(games.game);
+  if (games.flags) flagsUI.restore(games.flags);
+
+  if (games.doodle) {
+    const d = games.doodle;
+    startedDoodleUI();
+    isDrawingTurn = d.word != null;
+    document.getElementById("doodle-status").textContent = isDrawingTurn
+      ? `Your turn to draw! (Round ${d.round}/${d.totalRounds})`
+      : `${d.drawerName} is drawing (Round ${d.round}/${d.totalRounds})`;
+    document.getElementById("doodle-word-display").textContent = isDrawingTurn
+      ? d.word.toUpperCase()
+      : Array(d.wordLength).fill("_").join(" ");
+    document.getElementById("doodle-hint").textContent = isDrawingTurn
+      ? "Draw the word shown above — others are guessing in Chat!"
+      : "Guess in the Chat tab! (drawing so far isn't replayed)";
+    clearInterval(doodleTimerInterval);
+    doodleTimerInterval = runTimerBar("doodle-timer-fill", d.remainingMs);
+    if (d.scores && d.scores.length) renderDoodleScores(d.scores);
+  }
+
+  if (games.headsup) {
+    const h = games.headsup;
+    startedHeadsUpUI();
+    isHeadsUpPerformer = h.word == null;
+    document.getElementById("headsup-status").textContent = isHeadsUpPerformer
+      ? `Your turn! Don't look — everyone else can see the word. (Round ${h.round}/${h.totalRounds})`
+      : `${h.performerName} is guessing — describe the word out loud! (Round ${h.round}/${h.totalRounds})`;
+    document.getElementById("headsup-actions").style.display = isHeadsUpPerformer ? "none" : "flex";
+    const wordEl = document.getElementById("headsup-word-display");
+    wordEl.classList.toggle("hidden-for-performer", isHeadsUpPerformer);
+    wordEl.textContent = isHeadsUpPerformer ? "🙈" : h.word;
+    document.getElementById("headsup-tally").textContent = `Words this round: ${h.wordsThisRound}`;
+    clearInterval(headsUpTimerInterval);
+    headsUpTimerInterval = runTimerBar("headsup-timer-fill", h.remainingMs);
+    if (h.scores && h.scores.length) renderHeadsUpScores(h.scores);
+  }
+}
+
+// Drives a timer bar from `remainingMs` down to zero. Shared by the snapshot restore paths.
+function runTimerBar(fillId, remainingMs, onDone) {
+  const startedAt = Date.now();
+  const interval = setInterval(() => {
+    const pct = Math.max(0, 100 - ((Date.now() - startedAt) / remainingMs) * 100);
+    const fill = document.getElementById(fillId);
+    if (fill) fill.style.width = pct + "%";
+    if (pct <= 0) {
+      clearInterval(interval);
+      if (onDone) onDone();
+    }
+  }, 100);
+  return interval;
+}
 
 // ---------- Heads Up ----------
 document.getElementById("start-headsup-btn").onclick = () => socket.emit("headsup:start");

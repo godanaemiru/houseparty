@@ -39,6 +39,13 @@
   </div>
 
   <div class="main-content">
+    <div id="ios-standalone-warning" style="display:none; width:100%; max-width:640px; margin-bottom:20px;
+         background:rgba(255,184,94,0.15); border:1px solid rgba(255,184,94,0.4); border-radius:10px;
+         padding:10px 14px; font-size:0.85rem; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap">
+      <span>Video calls aren't reliable in iPhone home-screen apps (an Apple limitation). Open in Safari before joining a room.</span>
+      <a id="ios-standalone-open-safari" class="btn secondary" style="text-decoration:none; white-space:nowrap">Open in Safari</a>
+    </div>
+
     <div class="hero">
       <h1>Hey <span id="hero-username"></span> 👋</h1>
       <p>Start a room and drop the link, or join one your friends are in.</p>
@@ -69,6 +76,18 @@
 <script src="/js/api.js"></script>
 <script>
   Auth.requireAuth();
+
+  // See public/js/room.js for the full explanation: iOS home-screen apps run video calls
+  // in a restricted context, so warn here too, before the user even tries to join a room.
+  if (window.navigator.standalone === true) {
+    const warning = document.getElementById("ios-standalone-warning");
+    warning.style.display = "flex";
+    const link = document.getElementById("ios-standalone-open-safari");
+    link.href = window.location.href;
+    link.target = "_blank";
+    link.rel = "noopener";
+  }
+
   const user = Auth.getUser();
   document.getElementById("me-username").textContent = user.username;
   document.getElementById("hero-username").textContent = user.username;

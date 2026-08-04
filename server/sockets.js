@@ -8,6 +8,14 @@ const roomMembers = new Map(); // roomCode -> Map(userId -> {socketId, username,
 const doodleGames = new Map(); // roomCode -> doodle game state
 const headsUpGames = new Map(); // roomCode -> heads up game state
 const userRooms = new Map(); // userId -> { code, name } — which room a user is currently in, if any
+const pendingRoomDeactivations = new Map(); // roomCode -> timeout handle
+
+// When the last person leaves a room we retire it, but NOT immediately: a page refresh, a
+// phone locking, or a brief mobile-network drop all look exactly like "everyone left" for
+// a few seconds. Deactivating instantly meant refreshing while alone in a room made the
+// rejoin fail with "Room not found". This grace period keeps the room reservable long
+// enough to come back to; it's cancelled the moment anyone (re)joins.
+const ROOM_GRACE_MS = Number.parseInt(process.env.ROOM_GRACE_MS, 10) || 120000;
 
 const DOODLE_WORDS = [
   "pizza", "guitar", "dolphin", "rocket", "castle", "umbrella", "penguin", "volcano",
@@ -73,6 +81,31 @@ function buildFlagQuestions(count) {
   });
 }
 
+// Retire an empty room after ROOM_GRACE_MS, unless someone rejoins first (see the
+// ROOM_GRACE_MS comment above for why the delay exists).
+function scheduleRoomDeactivation(roomCode) {
+  cancelRoomDeactivation(roomCode);
+  const timer = setTimeout(() => {
+    pendingRoomDeactivations.delete(roomCode);
+    const members = roomMembers.get(roomCode);
+    if (members && members.size > 0) return; // someone came back — leave it active
+    db.deactivateRoom(roomCode).catch((err) =>
+      logger.error({ err, roomCode }, "Failed to deactivate empty room")
+    );
+  }, ROOM_GRACE_MS);
+  // Don't hold the event loop open just for this timer (matters for clean test shutdown).
+  if (typeof timer.unref === "function") timer.unref();
+  pendingRoomDeactivations.set(roomCode, timer);
+}
+
+function cancelRoomDeactivation(roomCode) {
+  const timer = pendingRoomDeactivations.get(roomCode);
+  if (timer) {
+    clearTimeout(timer);
+    pendingRoomDeactivations.delete(roomCode);
+  }
+}
+
 function broadcastToUser(io, userId, event, payload) {
   const sockets = onlineUsers.get(userId);
   if (!sockets) return;
@@ -97,26 +130,20 @@ function attachSockets(io) {
     next();
   });
 
-  io.on("connection", async (socket) => {
+  // NOTE: this handler is deliberately NOT `async`, and every socket.on(...) below is
+  // registered synchronously before any `await`. Socket.IO does not queue incoming events
+  // for listeners that don't exist yet, so awaiting anything up here (we used to await a
+  // DB call for the friends list) means a client that emits "room:join" immediately after
+  // connecting can have that event silently dropped — the room just hangs with no error
+  // and no room:error. That race is nearly invisible on SQLite (the await resolves almost
+  // instantly) but hits constantly on a managed Postgres where the query is a real network
+  // round trip. The async presence work now happens at the bottom, after registration.
+  io.on("connection", (socket) => {
     const userId = socket.userId;
 
-    // ----- Presence -----
+    // Synchronous presence bookkeeping only — no awaits before the listeners below.
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId).add(socket.id);
-
-    const friendIds = await db.getFriendIds(userId);
-    for (const fid of friendIds) {
-      broadcastToUser(io, fid, "friend:online", { userId, username: socket.username });
-    }
-
-    socket.emit(
-      "friends:status",
-      friendIds.map((fid) => ({
-        userId: fid,
-        online: onlineUsers.has(fid),
-        room: userRooms.get(fid) || null,
-      }))
-    );
 
     // ----- Rooms -----
     socket.on("room:join", async ({ code, avatarColor }) => {
@@ -127,15 +154,23 @@ function attachSockets(io) {
       socket.join(`room:${roomCode}`);
       socket.roomCode = roomCode;
 
+      // Someone's here again — call off any pending retirement of this room.
+      cancelRoomDeactivation(roomCode);
+
       if (!roomMembers.has(roomCode)) roomMembers.set(roomCode, new Map());
       const members = roomMembers.get(roomCode);
+
+      // Register membership *before* building the game snapshot, so snapshot helpers that
+      // look the user up (e.g. "am I the drawer?") see them as present.
+      members.set(userId, { socketId: socket.id, username: socket.username, avatarColor });
 
       socket.emit("room:joined", {
         room: { code: room.code, name: room.name },
         peers: currentPeers(roomCode, userId),
+        // Lets someone who refreshed (or joined late) drop straight back into whatever
+        // round is already running, instead of being stuck on the idle panel.
+        games: activeGamesSnapshot(roomCode, userId),
       });
-
-      members.set(userId, { socketId: socket.id, username: socket.username, avatarColor });
 
       socket.to(`room:${roomCode}`).emit("room:peer-joined", {
         userId,
@@ -154,7 +189,11 @@ function attachSockets(io) {
       }
     });
 
-    socket.on("room:leave", () => leaveRoom(socket));
+    // leaveRoom is async (it hits the DB for friend IDs); without a .catch a transient DB
+    // error would surface as an unhandled promise rejection and can take the process down.
+    socket.on("room:leave", () => {
+      leaveRoom(socket).catch((err) => logger.error({ err }, "room:leave failed"));
+    });
 
     // ----- WebRTC signaling relay -----
     socket.on("webrtc:signal", ({ to, data }) => {
@@ -250,31 +289,49 @@ function attachSockets(io) {
           }
         }
       }
-      leaveRoom(socket);
+      leaveRoom(socket).catch((err) => logger.error({ err }, "disconnect cleanup failed"));
     });
+
+    // ----- Presence (async, runs only after every listener above is registered) -----
+    (async () => {
+      const friendIds = await db.getFriendIds(userId);
+      for (const fid of friendIds) {
+        broadcastToUser(io, fid, "friend:online", { userId, username: socket.username });
+      }
+      socket.emit(
+        "friends:status",
+        friendIds.map((fid) => ({
+          userId: fid,
+          online: onlineUsers.has(fid),
+          room: userRooms.get(fid) || null,
+        }))
+      );
+    })().catch((err) => logger.error({ err, userId }, "presence announcement failed"));
   });
 
   async function leaveRoom(socket) {
     const roomCode = socket.roomCode;
     if (!roomCode) return;
     const members = roomMembers.get(roomCode);
-    if (members) {
+    // Only remove the member if THIS socket is the one currently registered for them.
+    // Otherwise a user with the room open in two tabs would be dropped from the member
+    // list entirely as soon as they closed either one.
+    const isCurrentSocket = members && members.get(socket.userId)?.socketId === socket.id;
+    if (members && isCurrentSocket) {
       members.delete(socket.userId);
       if (members.size === 0) {
         roomMembers.delete(roomCode);
         triviaEngine.cleanupRoom(roomCode);
         flagsEngine.cleanupRoom(roomCode);
         const dgame = doodleGames.get(roomCode);
-        if (dgame) clearTimeout(dgame.timer);
+        if (dgame) { clearTimeout(dgame.timer); clearTimeout(dgame.transitionTimer); }
         doodleGames.delete(roomCode);
         const hgame = headsUpGames.get(roomCode);
-        if (hgame) clearTimeout(hgame.timer);
+        if (hgame) { clearTimeout(hgame.timer); clearTimeout(hgame.transitionTimer); }
         headsUpGames.delete(roomCode);
-        // Room is now empty — retire it so its code can't be re-joined and stale rows
-        // don't pile up. A fresh room (new code) is created next time someone starts one.
-        db.deactivateRoom(roomCode).catch((err) =>
-          logger.error({ err, roomCode }, "Failed to deactivate empty room")
-        );
+        // Room is now empty — retire it (after a grace period) so its code can't be
+        // re-joined forever and stale rows don't pile up.
+        scheduleRoomDeactivation(roomCode);
       } else {
         // If the person drawing/performing leaves mid-round, don't leave everyone else
         // waiting forever.
@@ -290,9 +347,13 @@ function attachSockets(io) {
         }
       }
     }
-    socket.to(`room:${roomCode}`).emit("room:peer-left", { userId: socket.userId });
     socket.leave(`room:${roomCode}`);
     socket.roomCode = null;
+
+    // Don't announce a departure (or clear presence) if the user is still in the room on
+    // another socket/tab — only the socket that actually held their membership does that.
+    if (!isCurrentSocket) return;
+    socket.to(`room:${roomCode}`).emit("room:peer-left", { userId: socket.userId });
 
     if (userRooms.get(socket.userId)?.code === roomCode) {
       userRooms.delete(socket.userId);
@@ -354,6 +415,14 @@ function attachSockets(io) {
 
     const members = roomMembers.get(roomCode);
     if (!members || members.size === 0) return;
+    // Someone has to guess. Without this, the game started and instantly "ended", showing
+    // a baffling Game Over — say what's actually needed instead.
+    if (members.size < 2) {
+      return io.to(`room:${roomCode}`).emit("doodle:need-players", {
+        message: "You need at least 2 people in the room to play Doodle.",
+      });
+    }
+    if (existing) clearTimeout(existing.transitionTimer);
     const order = [...members.keys()];
 
     const game = {
@@ -422,7 +491,10 @@ function attachSockets(io) {
       word: game.word,
       scores: doodleScoreboard(game, roomCode),
     });
-    setTimeout(() => nextDoodleRound(io, roomCode), 3000);
+    // Tracked on the game object so it can be cancelled — an untracked timer could fire
+    // into a *newly started* game and skip its first round.
+    clearTimeout(game.transitionTimer);
+    game.transitionTimer = setTimeout(() => nextDoodleRound(io, roomCode), 3000);
   }
 
   // Trivia and Flag Quiz are both "N multiple-choice questions with a countdown timer and
@@ -524,11 +596,41 @@ function attachSockets(io) {
 
     function cleanupRoom(roomCode) {
       const game = games.get(roomCode);
-      if (game) clearTimeout(game.timer);
+      if (game) {
+        clearTimeout(game.timer);
+        clearTimeout(game.transitionTimer);
+      }
       games.delete(roomCode);
     }
 
-    return { start, handleAnswer, cleanupRoom };
+    // Current round state for someone who just (re)joined, so their client can render the
+    // question already in progress instead of the idle "Start" panel. Returns null when
+    // there's nothing running.
+    function getSnapshot(roomCode) {
+      const game = games.get(roomCode);
+      if (!game || !game.active || !game.questions[game.index]) return null;
+      const q = game.questions[game.index];
+      const timeLimit = q.timeLimit || 10000;
+      const remainingMs = Math.max(0, game.questionStartedAt + timeLimit - Date.now());
+      return {
+        questionId: q.id,
+        index: game.index,
+        total: game.questions.length,
+        question: q.question,
+        options: q.options,
+        timeLimit,
+        remainingMs,
+        alreadyAnswered: false, // per-user; filled in by the caller below
+        scores: scoreboardFor(game, roomCode),
+      };
+    }
+
+    function hasAnswered(roomCode, userId) {
+      const game = games.get(roomCode);
+      return Boolean(game && game.answered.has(userId));
+    }
+
+    return { start, handleAnswer, cleanupRoom, getSnapshot, hasAnswered };
   }
 
   const triviaEngine = createQuizEngine({
@@ -539,6 +641,60 @@ function attachSockets(io) {
     eventPrefix: "flags",
     fetchQuestions: async () => buildFlagQuestions(6),
   });
+
+  // Everything currently in progress in this room, from the perspective of `userId`.
+  // Secrets stay need-to-know: the doodle word only goes to the drawer, the Heads Up word
+  // only to non-performers — the same rules the live events follow.
+  function activeGamesSnapshot(roomCode, userId) {
+    const snapshot = {};
+
+    const trivia = triviaEngine.getSnapshot(roomCode);
+    if (trivia) {
+      snapshot.game = { ...trivia, alreadyAnswered: triviaEngine.hasAnswered(roomCode, userId) };
+    }
+    const flags = flagsEngine.getSnapshot(roomCode);
+    if (flags) {
+      snapshot.flags = { ...flags, alreadyAnswered: flagsEngine.hasAnswered(roomCode, userId) };
+    }
+
+    const dgame = doodleGames.get(roomCode);
+    if (dgame && dgame.active && dgame.word) {
+      const members = roomMembers.get(roomCode);
+      const drawer = members && members.get(dgame.drawerId);
+      const isDrawer = dgame.drawerId === userId;
+      snapshot.doodle = {
+        drawerId: dgame.drawerId,
+        drawerName: drawer ? drawer.username : "Player",
+        wordLength: dgame.word.length,
+        round: dgame.roundIndex + 1,
+        totalRounds: dgame.totalRounds,
+        remainingMs: Math.max(0, dgame.roundEndsAt - Date.now()),
+        scores: doodleScoreboard(dgame, roomCode),
+        // The canvas history isn't retained server-side, so a rejoiner starts from a blank
+        // canvas and sees strokes from this point on.
+        word: isDrawer ? dgame.word : null,
+      };
+    }
+
+    const hgame = headsUpGames.get(roomCode);
+    if (hgame && hgame.active && hgame.currentWord) {
+      const members = roomMembers.get(roomCode);
+      const performer = members && members.get(hgame.performerId);
+      const isPerformer = hgame.performerId === userId;
+      snapshot.headsup = {
+        performerId: hgame.performerId,
+        performerName: performer ? performer.username : "Player",
+        round: hgame.roundIndex + 1,
+        totalRounds: hgame.totalRounds,
+        remainingMs: Math.max(0, hgame.roundEndsAt - Date.now()),
+        wordsThisRound: hgame.wordsThisRound,
+        scores: headsUpScoreboard(hgame, roomCode),
+        word: isPerformer ? null : hgame.currentWord,
+      };
+    }
+
+    return snapshot;
+  }
 
   // ---------- Heads Up ----------
   // Rotates through everyone in the room as "performer" — the one person who can't see
@@ -568,6 +724,13 @@ function attachSockets(io) {
 
     const members = roomMembers.get(roomCode);
     if (!members || members.size === 0) return;
+    // Heads Up needs someone to give the clues, otherwise it ends immediately.
+    if (members.size < 2) {
+      return io.to(`room:${roomCode}`).emit("headsup:need-players", {
+        message: "You need at least 2 people in the room to play Heads Up.",
+      });
+    }
+    if (existing) clearTimeout(existing.transitionTimer);
     const order = [...members.keys()];
 
     const game = {
@@ -656,7 +819,9 @@ function attachSockets(io) {
       wordsThisRound: game.wordsThisRound,
       scores: headsUpScoreboard(game, roomCode),
     });
-    setTimeout(() => nextHeadsUpRound(io, roomCode), 3000);
+    // Tracked so a stale transition can't advance a freshly started game (see doodle).
+    clearTimeout(game.transitionTimer);
+    game.transitionTimer = setTimeout(() => nextHeadsUpRound(io, roomCode), 3000);
   }
 }
 
